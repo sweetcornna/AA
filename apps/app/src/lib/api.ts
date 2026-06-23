@@ -140,6 +140,16 @@ export async function createExpense(
   return unwrap<{ id: string }>(res);
 }
 
+/** Ask the AI assistant a question about your ledger (agent-query Edge Function). */
+export async function askAgent(question: string): Promise<string> {
+  const { data, error } = await supabase.functions.invoke("agent-query", {
+    body: { question },
+  });
+  if (error) throw new Error(error.message ?? "助手暂时不可用");
+  if (data?.error) throw new Error(data.error);
+  return (data?.answer as string) ?? "我没太理解，换个说法再问问？";
+}
+
 /** Natural language → ParsedExpense via the parse-expense Edge Function. */
 export async function parseExpense(circleId: string, text: string): Promise<ParsedExpense> {
   const { data, error } = await supabase.functions.invoke("parse-expense", {
