@@ -140,6 +140,25 @@ export async function createExpense(
   return unwrap<{ id: string }>(res);
 }
 
+/** Transcribe recorded audio via the asr-transcribe Edge Function (cloud ASR). */
+export async function transcribeAudio(blob: Blob): Promise<string> {
+  const buf = await blob.arrayBuffer();
+  // base64-encode in chunks to avoid call-stack limits on large buffers.
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  const audioBase64 = btoa(bin);
+  const { data, error } = await supabase.functions.invoke("asr-transcribe", {
+    body: { audioBase64, mimeType: blob.type || "audio/webm" },
+  });
+  if (error) throw new Error(error.message ?? "语音转写失败");
+  if (data?.error) throw new Error(data.error);
+  return (data?.text as string) ?? "";
+}
+
 /** Ask the AI assistant a question about your ledger (agent-query Edge Function). */
 export async function askAgent(question: string): Promise<string> {
   const { data, error } = await supabase.functions.invoke("agent-query", {

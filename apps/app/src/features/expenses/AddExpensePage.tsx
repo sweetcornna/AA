@@ -8,7 +8,7 @@ import {
 import type { Allocation, ExpenseDraft, ParsedExpense, SplitType } from "@aa/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Avatar,
@@ -23,6 +23,8 @@ import {
   Svg,
 } from "../../components/ui";
 import { createExpense, getCircle, listMembers, parseExpense } from "../../lib/api";
+import { startCloudRecording, startWebSpeech, webSpeechAvailable } from "../../lib/speech";
+import type { Recording } from "../../lib/speech";
 import { useAuth } from "../auth/AuthProvider";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -65,7 +67,12 @@ export function AddExpensePage() {
   const [source, setSource] = useState<"manual" | "voice" | "agent">("manual");
   const [rawText, setRawText] = useState<string | null>(null);
   const [unresolved, setUnresolved] = useState<string[]>([]);
-  const [listening, setListening] = useState(false);
+  // Voice capture state machine: idle → listening (Web Speech) / recording
+  // (cloud) → transcribing → idle.
+  const [voice, setVoice] = useState<"idle" | "listening" | "recording" | "transcribing">("idle");
+  const [voiceErr, setVoiceErr] = useState<string | null>(null);
+  const webStopRef = useRef<(() => void) | null>(null);
+  const recRef = useRef<Recording | null>(null);
 
   useEffect(() => {
     if (!members.data) return;
@@ -133,18 +140,57 @@ export function AddExpensePage() {
 
   const parse = useMutation({ mutationFn: () => parseExpense(circleId!, nlText.trim()), onSuccess: applyParsed });
 
-  function startVoice() {
-    const SR = (window as any).webkitSpeechRecognition ?? (window as any).SpeechRecognition;
-    if (!SR) return window.alert("当前环境不支持浏览器语音，请直接输入文字。");
-    const rec = new SR();
-    rec.lang = "zh-CN";
-    rec.interimResults = false;
-    rec.onresult = (e: any) => setNlText(e.results[0][0].transcript);
-    rec.onend = () => setListening(false);
-    rec.onerror = () => setListening(false);
-    setListening(true);
-    rec.start();
+  // Prefer the free Web Speech API; fall back to record→cloud ASR where it is
+  // unavailable (e.g. iOS WKWebView). Tapping again stops the current capture.
+  async function toggleVoice() {
+    setVoiceErr(null);
+    if (voice === "listening") {
+      webStopRef.current?.();
+      return;
+    }
+    if (voice === "recording") {
+      const rec = recRef.current;
+      recRef.current = null;
+      if (!rec) return setVoice("idle");
+      setVoice("transcribing");
+      try {
+        const text = await rec.stopAndTranscribe();
+        if (text) setNlText(text);
+        else setVoiceErr("没听清，请再试一次或直接输入。");
+      } catch (e) {
+        setVoiceErr((e as Error).message || "语音转写失败，请直接输入。");
+      } finally {
+        setVoice("idle");
+      }
+      return;
+    }
+    // idle → start
+    if (webSpeechAvailable()) {
+      setVoice("listening");
+      webStopRef.current = startWebSpeech({
+        onText: (t) => setNlText(t),
+        onEnd: () => {
+          webStopRef.current = null;
+          setVoice("idle");
+        },
+        onError: (m) => setVoiceErr(m),
+      });
+      return;
+    }
+    try {
+      recRef.current = await startCloudRecording();
+      setVoice("recording");
+    } catch {
+      setVoiceErr("无法访问麦克风，请直接输入文字。");
+      setVoice("idle");
+    }
   }
+
+  // Stop any active capture if the user leaves the page.
+  useEffect(() => () => {
+    webStopRef.current?.();
+    recRef.current?.cancel();
+  }, []);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -194,13 +240,23 @@ export function AddExpensePage() {
           </div>
           <Hairline inset={4} />
           <div className="flex gap-2 px-1 pt-2">
-            <button className="flex-1 rounded-[9px] py-2 text-[14px] font-medium" style={{ background: "var(--seg-bg)", color: "var(--ink)" }} disabled={listening} onClick={startVoice}>
-              {listening ? "🎤 聆听中…" : "🎤 语音"}
+            <button
+              className="flex-1 rounded-[9px] py-2 text-[14px] font-medium disabled:opacity-50"
+              style={
+                voice === "listening" || voice === "recording"
+                  ? { background: "var(--red)", color: "#fff" }
+                  : { background: "var(--seg-bg)", color: "var(--ink)" }
+              }
+              disabled={voice === "transcribing"}
+              onClick={toggleVoice}
+            >
+              {voice === "listening" ? "● 聆听中,点按停止" : voice === "recording" ? "● 录音中,点按结束" : voice === "transcribing" ? "转写中…" : "🎤 语音"}
             </button>
             <button className="flex-1 rounded-[9px] py-2 text-[14px] font-semibold text-white disabled:opacity-40" style={{ background: "var(--blue)" }} disabled={!nlText.trim() || parse.isPending} onClick={() => parse.mutate()}>
               {parse.isPending ? "解析中…" : "AI 解析"}
             </button>
           </div>
+          {voiceErr && <p className="px-1 pt-1.5 text-[12px]" style={{ color: "var(--red)" }}>{voiceErr}</p>}
           {parse.error && <p className="px-1 pt-1.5 text-[12px]" style={{ color: "var(--red)" }}>{(parse.error as Error).message}</p>}
           {source === "agent" && (
             <p className="px-1 pt-1.5 text-[12px]" style={{ color: "var(--green)" }}>
