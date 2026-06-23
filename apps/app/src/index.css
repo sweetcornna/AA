@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== iOS Human Interface tokens ===== */
+:root {
+  color-scheme: light;
+
+  --bg: #f2f2f7; /* grouped background */
+  --card: #ffffff;
+  --ink: #1c1c1e; /* label */
+  --label2: #8e8e93; /* secondary label */
+  --label3: #6d6d72; /* group header */
+  --placeholder: #b9b9be;
+  --tertiary: #c4c4c7; /* chevrons */
+  --separator: #d8d8dc;
+  --seg-bg: #e3e3e8;
+
+  --blue: #007aff;
+  --green: #248a3d;
+  --green-bright: #30d158;
+  --red: #d70015;
+  --orange: #ff9500;
+  --violet: #5b5fae;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.01em;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* tabular figures for money (SF Pro) */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* frosted top bar / tab bar */
+.blur-bar {
+  background: rgba(242, 242, 247, 0.72);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+}
+.blur-pill {
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(26px) saturate(180%);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  box-shadow:
+    0 7px 22px -8px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.65);
+}
+
+/* dark balance hero + dark icon tiles */
+.hero-dark {
+  background: linear-gradient(152deg, #33333a 0%, #1f1f22 52%, #161618 100%);
+  box-shadow:
+    0 14px 34px -16px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+}
+.icon-tile {
+  background:
+    radial-gradient(125% 90% at 28% 6%, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 56%),
+    linear-gradient(160deg, #3a3a40, #222226);
+  box-shadow:
+    0 4px 9px -3px rgba(0, 0, 0, 0.26),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.35);
+}
+
+@keyframes aaspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes aasheen {
+  0%,
+  100% {
+    transform: translateX(0) translateY(0);
+    opacity: 0.95;
+  }
+  50% {
+    transform: translateX(-22px) translateY(8px);
+    opacity: 0.55;
+  }
+}

@@ -1,0 +1,4 @@
+# Tauri 2's dependency tree needs Cargo's edition2024 feature (Rust >= 1.85).
+# Pin this project to stable so it builds regardless of the global default.
+[toolchain]
+channel = "stable"

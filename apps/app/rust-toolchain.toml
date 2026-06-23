@@ -1,0 +1,9 @@
+# Tauri 2's dependency tree needs Cargo's edition2024 feature (Rust >= 1.85).
+#
+# The mobile build tasks (Gradle for Android, the Xcode "Build Rust Code" phase
+# for iOS) invoke cargo via `npm run`, which sets the cwd to this package dir
+# (apps/app) — NOT src-tauri. So src-tauri/rust-toolchain.toml is not an ancestor
+# of that cwd and rustup falls back to the global default (1.82) -> edition2024
+# error. Pinning stable here covers every cwd the build tools use.
+[toolchain]
+channel = "stable"

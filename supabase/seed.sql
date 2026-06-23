@@ -1,0 +1,16 @@
+-- seed.sql — local dev seed.
+--
+-- Auth users are created through the app's OTP flow (locally, the magic
+-- link / OTP lands in Inbucket at http://localhost:54324). Because circles,
+-- members and expenses all reference real auth.users ids, the most reliable
+-- way to get demo data is:
+--   1. `supabase start`
+--   2. Sign in as two test accounts via the app (Inbucket catches the codes).
+--   3. Create a circle, generate an invite, join with the second account.
+--
+-- Add deterministic seed rows here once you have stable local user ids, e.g.:
+--
+-- select public.create_circle('周末旅行', 'AA 测试圈子', 'CNY');
+--
+-- Intentionally left without fixed user inserts to avoid coupling to
+-- auto-generated auth ids.

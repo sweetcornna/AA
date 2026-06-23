@@ -1,0 +1,47 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# tauri / rust
+apps/app/src-tauri/target/
+
+# generated mobile projects: the SOURCE is committed (it carries our Android/iOS
+# build fixes — AES-intrinsic gradle args, iOS ATS exception); build artifacts
+# are excluded here and also by the nested gen/android/.gitignore and
+# gen/apple/.gitignore that Tauri generates.
+apps/app/src-tauri/gen/schemas/
+apps/app/src-tauri/gen/android/app/build/
+apps/app/src-tauri/gen/android/build/
+apps/app/src-tauri/gen/android/.gradle/
+apps/app/src-tauri/gen/android/.idea/
+apps/app/src-tauri/gen/android/local.properties
+apps/app/src-tauri/gen/apple/build/
+apps/app/src-tauri/gen/apple/Externals/
+apps/app/src-tauri/gen/apple/Pods/
+apps/app/src-tauri/gen/apple/.build/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# supabase local
+supabase/.branches/
+supabase/.temp/
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# test / coverage
+coverage/
+playwright-report/
+test-results/

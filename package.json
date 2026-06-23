@@ -1,0 +1,19 @@
+{
+  "name": "aa",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "AA 记账分账多平台软件 (React + Tauri v2 + Supabase)",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

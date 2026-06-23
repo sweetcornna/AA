@@ -1,0 +1,21 @@
+[package]
+name = "aa"
+version = "0.0.0"
+description = "AA 记账分账"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+# `_lib` suffix avoids name collision with the binary on Windows; the
+# staticlib/cdylib crate types are required for the mobile (iOS/Android) targets.
+name = "aa_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-deep-link = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
