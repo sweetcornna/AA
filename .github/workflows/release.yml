@@ -1,0 +1,53 @@
+name: Release
+
+# Cut a release by pushing a version tag, e.g.:
+#   git tag v0.0.1 && git push origin v0.0.1
+# or run manually from the Actions tab (provide the tag). Builds the desktop
+# installers on all three OSes and publishes them to a GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.0.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build + publish (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/app/src-tauri
+      - name: Linux system deps (Tauri v2 / WebKitGTK)
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+      - run: npm ci
+      - name: Build + publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/app
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: "AA 记账 ${{ github.event.inputs.tag || github.ref_name }}"
+          releaseBody: "桌面安装包(macOS / Windows / Linux)。移动端构建见 README。"
+          releaseDraft: false
+          prerelease: false
