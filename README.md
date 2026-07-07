@@ -19,6 +19,7 @@
 | **Windows** | `AA.Ledger_..._x64-setup.exe` | 双击运行,一路「下一步」即可 |
 | **Mac**(Apple 芯片 M1/M2/M3/M4) | `AA.Ledger_..._aarch64.dmg` | 双击打开,把图标拖进「应用程序」文件夹 |
 | **Linux** | `.AppImage` / `.deb` / `.rpm` | 见下方说明 |
+| **Android** | `AA.Ledger_..._android-universal-debug.apk` | 允许「未知来源」后安装(debug 签名) |
 
 > 文件名里的 `0.0.2` 是版本号,以后更新会变。Mac 暂时只提供 Apple 芯片版(2020 年后的 Mac 基本都是);Intel 老款 Mac 暂未提供。
 
@@ -33,7 +34,7 @@
   ```
 - **Linux**:`.AppImage` 需先 `chmod +x 文件名` 再双击运行;`.deb`(Ubuntu/Debian)、`.rpm`(Fedora)用系统的软件安装器打开即可。
 
-> 手机版(Android / iOS)暂未上架应用商店,需要自行构建,见[「给开发者」](#-给开发者)。
+> Android 可直接从下载页装 APK;iOS 受 Apple 签名所限暂需自行构建,见[「给开发者」](#-给开发者)。
 
 ---
 
