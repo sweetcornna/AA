@@ -84,18 +84,24 @@ npm test --workspace=@aa/shared
 
 ## 8. 语音 / AI 记账（里程碑 2）
 
-"一句话记账"在记一笔页顶部：输入/语音说一句话 → `parse-expense` Edge Function 解析成结构化账单 → 预填表单（含人名对齐、未识别项高亮）→ 确认保存（`source='agent'`，原文存 `raw_text`）。
+"一句话记账"在记一笔页顶部：输入/语音说一句话 → `parse-expense` Edge Function 解析成结构化账单 → 预填表单（含人名对齐、未识别项高亮）→ 确认保存（语音来源 `source='voice'`、纯文字 AI 解析 `source='agent'`，原文存 `raw_text`，同时落 `ai_provider/asr_provider/ai_confidence/ai_raw` 审计字段）。
 
-- 本地起 Edge Function：`supabase functions serve parse-expense`（首次拉 edge-runtime 镜像）。
-- **默认无需 API key**：未设 `ANTHROPIC_API_KEY` 时走本地规则兜底解析（金额/人名/分类/相对日期），流程可直接跑通。
-- **接入真 Claude**：设密钥后自动改用 Claude（Opus 4.8，strict tool use 强约束结构化输出）：
+「助手」页问账本（`agent-query`）：花销/结余/谁付的自动回答；说"帮我和小明结一下账"时 agent 只**提议**一笔结算（金额来自服务端权威快照，模型不能编造），界面出确认卡片，点「确认结算」才由客户端在 RLS 约束下写入。
+
+- 本地 `supabase start` 自带 edge runtime，直接服务 `supabase/functions/*`；改代码后 `docker restart supabase_edge_runtime_AA` 生效。
+- **默认无需 API key**：未配置密钥时走规则 provider（金额/人名/分类/相对日期/结算建议），流程可直接跑通。
+- **AI 层厂商无关、可插拔**（`supabase/functions/_shared/llm/`）：`registry.ts` 按
+  「`ai_settings` 圈子行 > `ai_settings` 全局行 > `LLM_PROVIDER` 环境变量 > 默认 claude」
+  解析 provider；任一层 `ai_enabled=false` 是总开关（强制规则 provider，不出外网）。
+  已内置 `claude`（默认，strict tool use）/ `openai`（chat completions + json_schema）/
+  `rule`（零依赖兜底）；**加一家 AI = 一个实现类 + registry 注册一行**。
   ```bash
   supabase secrets set ANTHROPIC_API_KEY=sk-ant-...      # 或本地：
   echo 'ANTHROPIC_API_KEY=sk-ant-...' >> supabase/functions/.env
-  supabase functions serve parse-expense --env-file supabase/functions/.env
+  # 切换厂商：LLM_PROVIDER=openai + OPENAI_API_KEY=...，或往 ai_settings 表插一行
   ```
-- AI 层厂商无关：`parse-expense` 里 `parseWithClaude`/`fallbackParse` 可替换/扩展为其他 provider。
-- 端到端验证：`python3 scripts/e2e-ai-parse.py`（说"我和小红吃火锅 200 平摊"→预填¥200→保存）。
+- 端到端验证：`node scripts/verify-ai.mjs`（解析 → 助手问答 → 结算提议/确认 → 总开关，13 项断言）；
+  UI 冒烟另有 `python3 scripts/e2e-ai-parse.py`。
 
 ## 关键设计备注
 
@@ -104,4 +110,5 @@ npm test --workspace=@aa/shared
   `create_circle` / `create_expense`），在数据库内校验，省去了单独的 Edge Function
   与 service-role key（比原计划更简单、同样安全）。
 - 余额来自 `circle_balances` 视图（`security_invoker`，继承 RLS）。
-- AI / 语音是里程碑 2；`expenses.source/raw_text/ai_*` 字段已预留。
+- AI / 语音（里程碑 2）已落地：`expenses.source/raw_text/ai_*` 记录每笔账的 AI 来源与
+  置信度；`ai_settings` 表在运行时切换厂商/关停 AI，无需重新部署。

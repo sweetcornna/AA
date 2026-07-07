@@ -105,9 +105,20 @@ export async function listExpenses(circleId: string): Promise<Expense[]> {
  * expense + splits atomically via the create_expense RPC (server validates the
  * sum equals the total).
  */
+export interface ExpenseAiMeta {
+  /** LLM that produced the prefill (parse-expense `_provider`). */
+  aiProvider?: string | null;
+  /** ASR route the raw text came through: "web-speech" | "cloud:<vendor>". */
+  asrProvider?: string | null;
+  /** Model's 0..1 confidence for the prefill. */
+  aiConfidence?: number | null;
+  /** Full ParsedExpense as returned, for auditing / prompt iteration. */
+  aiRaw?: unknown;
+}
+
 export async function createExpense(
   draft: ExpenseDraft,
-  opts?: { source?: "manual" | "voice" | "agent"; rawText?: string | null },
+  opts?: { source?: "manual" | "voice" | "agent"; rawText?: string | null } & ExpenseAiMeta,
 ): Promise<{ id: string }> {
   const allocation = computeSplit({
     total: draft.amountMinor,
@@ -136,12 +147,16 @@ export async function createExpense(
     p_splits: splits,
     p_source: opts?.source ?? "manual",
     p_raw_text: opts?.rawText ?? null,
+    p_ai_provider: opts?.aiProvider ?? null,
+    p_asr_provider: opts?.asrProvider ?? null,
+    p_ai_confidence: opts?.aiConfidence ?? null,
+    p_ai_raw: opts?.aiRaw ?? null,
   });
   return unwrap<{ id: string }>(res);
 }
 
 /** Transcribe recorded audio via the asr-transcribe Edge Function (cloud ASR). */
-export async function transcribeAudio(blob: Blob): Promise<string> {
+export async function transcribeAudio(blob: Blob): Promise<{ text: string; provider: string }> {
   const buf = await blob.arrayBuffer();
   // base64-encode in chunks to avoid call-stack limits on large buffers.
   const bytes = new Uint8Array(buf);
@@ -156,27 +171,54 @@ export async function transcribeAudio(blob: Blob): Promise<string> {
   });
   if (error) throw new Error(error.message ?? "语音转写失败");
   if (data?.error) throw new Error(data.error);
-  return (data?.text as string) ?? "";
+  return { text: (data?.text as string) ?? "", provider: `cloud:${data?._provider ?? "unknown"}` };
+}
+
+/**
+ * A settlement the agent proposes but does NOT execute. The user confirms in
+ * the UI and the client performs the insert itself (under RLS).
+ */
+export interface AgentSettleAction {
+  type: "settle_up";
+  circleId: string;
+  circleName: string;
+  fromUser: string;
+  fromName: string;
+  toUser: string;
+  toName: string;
+  amountMinor: number;
+  currency: string;
+}
+
+export interface AgentReply {
+  answer: string;
+  action: AgentSettleAction | null;
 }
 
 /** Ask the AI assistant a question about your ledger (agent-query Edge Function). */
-export async function askAgent(question: string): Promise<string> {
+export async function askAgent(question: string): Promise<AgentReply> {
   const { data, error } = await supabase.functions.invoke("agent-query", {
     body: { question },
   });
   if (error) throw new Error(error.message ?? "助手暂时不可用");
   if (data?.error) throw new Error(data.error);
-  return (data?.answer as string) ?? "我没太理解，换个说法再问问？";
+  return {
+    answer: (data?.answer as string) ?? "我没太理解，换个说法再问问？",
+    action: (data?.action as AgentSettleAction | null) ?? null,
+  };
 }
 
 /** Natural language → ParsedExpense via the parse-expense Edge Function. */
-export async function parseExpense(circleId: string, text: string): Promise<ParsedExpense> {
+export async function parseExpense(
+  circleId: string,
+  text: string,
+): Promise<ParsedExpense & { _provider?: string }> {
   const { data, error } = await supabase.functions.invoke("parse-expense", {
     body: { circleId, text },
   });
   if (error) throw new Error(error.message ?? "解析失败");
   if (data?.error) throw new Error(data.error);
-  return data as ParsedExpense;
+  return data as ParsedExpense & { _provider?: string };
 }
 
 // ---- balances & settlements ----

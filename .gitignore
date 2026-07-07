@@ -45,3 +45,7 @@ supabase/.temp/
 coverage/
 playwright-report/
 test-results/
+
+# local tooling artifacts
+.playwright-mcp/
+deno.lock

@@ -57,8 +57,8 @@ export function startWebSpeech(cb: {
 }
 
 export interface Recording {
-  /** Stop recording and resolve the transcribed text via the cloud function. */
-  stopAndTranscribe: () => Promise<string>;
+  /** Stop recording and resolve the transcript + ASR provider via the cloud function. */
+  stopAndTranscribe: () => Promise<{ text: string; provider: string }>;
   /** Abort without transcribing. */
   cancel: () => void;
 }
@@ -76,7 +76,7 @@ export async function startCloudRecording(): Promise<Recording> {
 
   return {
     stopAndTranscribe: () =>
-      new Promise<string>((resolve, reject) => {
+      new Promise<{ text: string; provider: string }>((resolve, reject) => {
         rec.onstop = async () => {
           cleanup();
           try {

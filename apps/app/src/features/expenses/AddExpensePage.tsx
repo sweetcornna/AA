@@ -67,6 +67,10 @@ export function AddExpensePage() {
   const [source, setSource] = useState<"manual" | "voice" | "agent">("manual");
   const [rawText, setRawText] = useState<string | null>(null);
   const [unresolved, setUnresolved] = useState<string[]>([]);
+  // AI provenance for the audit columns (ai_provider / asr_provider / …).
+  // asrProvider is set when nlText came from voice; cleared when the user types.
+  const [asrProvider, setAsrProvider] = useState<string | null>(null);
+  const [aiMeta, setAiMeta] = useState<{ provider: string | null; confidence: number; raw: unknown } | null>(null);
   // Voice capture state machine: idle → listening (Web Speech) / recording
   // (cloud) → transcribing → idle.
   const [voice, setVoice] = useState<"idle" | "listening" | "recording" | "transcribing">("idle");
@@ -119,8 +123,10 @@ export function AddExpensePage() {
     }
   }
 
-  function applyParsed(p: ParsedExpense) {
-    setSource("agent");
+  function applyParsed(p: ParsedExpense & { _provider?: string }) {
+    // Voice-captured sentence → 'voice'; typed sentence + AI parse → 'agent'.
+    setSource(asrProvider ? "voice" : "agent");
+    setAiMeta({ provider: p._provider ?? null, confidence: p.confidence, raw: p });
     setRawText(nlText.trim());
     setUnresolved(p.unresolved ?? []);
     setAmountStr(String(p.amount));
@@ -154,9 +160,11 @@ export function AddExpensePage() {
       if (!rec) return setVoice("idle");
       setVoice("transcribing");
       try {
-        const text = await rec.stopAndTranscribe();
-        if (text) setNlText(text);
-        else setVoiceErr("没听清，请再试一次或直接输入。");
+        const { text, provider } = await rec.stopAndTranscribe();
+        if (text) {
+          setNlText(text);
+          setAsrProvider(provider);
+        } else setVoiceErr("没听清，请再试一次或直接输入。");
       } catch (e) {
         setVoiceErr((e as Error).message || "语音转写失败，请直接输入。");
       } finally {
@@ -167,6 +175,7 @@ export function AddExpensePage() {
     // idle → start
     if (webSpeechAvailable()) {
       setVoice("listening");
+      setAsrProvider("web-speech");
       webStopRef.current = startWebSpeech({
         onText: (t) => setNlText(t),
         onEnd: () => {
@@ -196,7 +205,14 @@ export function AddExpensePage() {
     mutationFn: async () => {
       const parsed = expenseDraftSchema.safeParse(draft);
       if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "表单校验失败");
-      return createExpense(parsed.data, { source, rawText });
+      return createExpense(parsed.data, {
+        source,
+        rawText,
+        aiProvider: aiMeta?.provider ?? null,
+        asrProvider: source === "voice" ? asrProvider : null,
+        aiConfidence: aiMeta?.confidence ?? null,
+        aiRaw: aiMeta?.raw ?? null,
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["expenses", circleId] });
@@ -236,7 +252,15 @@ export function AddExpensePage() {
         <Card className="mb-5 p-3">
           <div className="mb-1 px-1 text-[12px] font-semibold" style={{ color: "var(--label3)" }}>✨ 一句话记账</div>
           <div className="flex h-11 items-center px-1">
-            <Input value={nlText} onChange={(e) => setNlText(e.target.value)} placeholder="如：昨晚和小红吃火锅 360 三人平摊" className="text-[15px]" />
+            <Input
+              value={nlText}
+              onChange={(e) => {
+                setNlText(e.target.value);
+                setAsrProvider(null); // typed/edited by hand — no longer a voice transcript
+              }}
+              placeholder="如：昨晚和小红吃火锅 360 三人平摊"
+              className="text-[15px]"
+            />
           </div>
           <Hairline inset={4} />
           <div className="flex gap-2 px-1 pt-2">

@@ -118,6 +118,58 @@ async function main() {
   check("balance: B is -5000", byUser[b.id] === -5000, `got ${byUser[b.id]}`);
   check("balances sum to zero", Object.values(byUser).reduce((s, v) => s + v, 0) === 0);
 
+  // AI audit fields persist through create_expense (milestone 2)
+  const aiExp = await b.client.rpc("create_expense", {
+    p_circle_id: circleId,
+    p_payer_id: b.id,
+    p_amount_minor: 3000,
+    p_currency: "CNY",
+    p_description: "打车",
+    p_category: "交通",
+    p_spent_at: "2026-06-23",
+    p_split_type: "equal",
+    p_splits: [
+      { user_id: a.id, owed_minor: 1500 },
+      { user_id: b.id, owed_minor: 1500 },
+    ],
+    p_source: "voice",
+    p_raw_text: "昨天打车30块",
+    p_ai_provider: "claude",
+    p_asr_provider: "web-speech",
+    p_ai_confidence: 0.92,
+    p_ai_raw: { amount: 30, splitType: "equal" },
+  });
+  check("create_expense accepts AI audit params", !aiExp.error && aiExp.data?.id, aiExp.error?.message);
+  const aiRow = await admin
+    .from("expenses")
+    .select("source, raw_text, ai_provider, asr_provider, ai_confidence, ai_raw")
+    .eq("id", aiExp.data?.id)
+    .maybeSingle();
+  check(
+    "AI audit fields persisted",
+    aiRow.data?.source === "voice" &&
+      aiRow.data?.ai_provider === "claude" &&
+      aiRow.data?.asr_provider === "web-speech" &&
+      Number(aiRow.data?.ai_confidence) === 0.92 &&
+      aiRow.data?.ai_raw?.amount === 30,
+    aiRow.error?.message ?? JSON.stringify(aiRow.data),
+  );
+
+  // ai_settings: operator-managed global row is readable by any signed-in user
+  const glob = await admin.from("ai_settings").insert({ circle_id: null, llm_provider: "claude" }).select().single();
+  check("service role can insert global ai_settings", !glob.error, glob.error?.message);
+  const globRead = await c.client.from("ai_settings").select("llm_provider").is("circle_id", null).maybeSingle();
+  check("any signed-in user reads global ai_settings", globRead.data?.llm_provider === "claude", globRead.error?.message);
+
+  // ai_settings: circle owner manages the circle override; plain member cannot
+  const ownSet = await a.client.from("ai_settings").insert({ circle_id: circleId, llm_provider: "rule", ai_enabled: false }).select().single();
+  check("circle owner inserts circle ai_settings", !ownSet.error, ownSet.error?.message);
+  const memSet = await b.client.from("ai_settings").update({ llm_provider: "openai" }).eq("circle_id", circleId).select();
+  check("plain member cannot update circle ai_settings", (memSet.data ?? []).length === 0, `updated ${memSet.data?.length} row(s)`);
+  const cSet = await c.client.from("ai_settings").select("llm_provider").eq("circle_id", circleId);
+  check("RLS: non-member C cannot read circle ai_settings", (cSet.data ?? []).length === 0, `saw ${cSet.data?.length}`);
+  await admin.from("ai_settings").delete().is("circle_id", null); // keep DB clean for reruns
+
   // RLS: non-member C sees nothing
   const cExp = await c.client.from("expenses").select("id").eq("circle_id", circleId);
   check("RLS: non-member C sees 0 expenses", (cExp.data ?? []).length === 0, `saw ${cExp.data?.length}`);

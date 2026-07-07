@@ -2,19 +2,24 @@
 //
 // The function builds an AUTHORITATIVE snapshot from the database (every query
 // runs under the caller's JWT, so RLS guarantees they only ever see their own
-// circles), then either lets Claude phrase an answer over that snapshot or, when
-// ANTHROPIC_API_KEY is unset, answers with a rule-based intent matcher. Read-only
-// — it never writes. Runs as a Supabase Edge Function (Deno).
+// circles), then hands it to the LLM provider from the registry (_shared/llm),
+// falling back to the rule-based provider without a key or on error.
+//
+// Read tools run automatically; the one WRITE the agent can do — settle_up —
+// is only ever PROPOSED: the response carries an `action` referencing a
+// server-computed transfer, the client shows a confirmation card, and only the
+// user's confirmation performs the insert (client-side, under RLS).
+// Runs as a Supabase Edge Function (Deno).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { resolveLLM, ruleProvider } from "../_shared/llm/registry.ts";
+import type { AgentReply, Snapshot } from "../_shared/llm/types.ts";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-
-const yuan = (minor: number) => (minor / 100).toFixed(2);
 
 function shanghaiNow(): Date {
   return new Date(Date.now() + 8 * 60 * 60 * 1000);
@@ -43,35 +48,13 @@ function minimizeTransfers(nets: { id: string; net: number }[]) {
   return out;
 }
 
-interface Snapshot {
-  me: { id: string; name: string };
-  today: string;
-  monthStart: string;
-  circles: {
-    id: string;
-    name: string;
-    currency: string;
-    myNet: number;
-    members: { id: string; name: string; net: number }[];
-    settlements: { from: string; to: string; amount: number }[];
-  }[];
-  myMonthSpendByCategory: { category: string; amount: number }[];
-  myMonthTotal: number;
-  recentExpenses: {
-    circle: string;
-    description: string;
-    category: string | null;
-    amount: number;
-    payer: string;
-    spentAt: string;
-  }[];
-}
-
+// deno-lint-ignore no-explicit-any
 async function buildSnapshot(supabase: any, userId: string): Promise<Snapshot> {
   const { data: circles } = await supabase
     .from("circles")
     .select("id, name, default_currency");
   const circleRows = circles ?? [];
+  // deno-lint-ignore no-explicit-any
   const circleIds = circleRows.map((c: any) => c.id);
 
   const { data: balances } = circleIds.length
@@ -105,6 +88,7 @@ async function buildSnapshot(supabase: any, userId: string): Promise<Snapshot> {
   const expRows = expenses ?? [];
 
   // my share per expense (for spend-by-category)
+  // deno-lint-ignore no-explicit-any
   const expIds = expRows.map((e: any) => e.id);
   const { data: splits } = expIds.length
     ? await supabase.from("expense_splits").select("expense_id, owed_minor").eq("user_id", userId).in("expense_id", expIds)
@@ -112,6 +96,7 @@ async function buildSnapshot(supabase: any, userId: string): Promise<Snapshot> {
   const myShare = new Map<string, number>();
   for (const s of splits ?? []) myShare.set(s.expense_id, s.owed_minor);
 
+  // deno-lint-ignore no-explicit-any
   const circleNameOf = new Map(circleRows.map((c: any) => [c.id, c.name]));
   const monthStart = monthStartISO();
 
@@ -128,13 +113,22 @@ async function buildSnapshot(supabase: any, userId: string): Promise<Snapshot> {
     }
   }
 
+  // deno-lint-ignore no-explicit-any
   const circlesOut = circleRows.map((c: any) => {
+    // deno-lint-ignore no-explicit-any
     const rows = (balances ?? []).filter((b: any) => b.circle_id === c.id);
+    // deno-lint-ignore no-explicit-any
     const memberNets = rows.map((b: any) => ({ id: b.user_id, name: nameOf.get(b.user_id) ?? "成员", net: b.net_minor }));
+    // deno-lint-ignore no-explicit-any
     const mine = memberNets.find((m: any) => m.id === userId)?.net ?? 0;
+    // Keep ids alongside names: settle_up proposals are validated against —
+    // and executed from — these server-computed transfers.
+    // deno-lint-ignore no-explicit-any
     const transfers = minimizeTransfers(memberNets.map((m: any) => ({ id: m.id, net: m.net }))).map((t) => ({
-      from: nameOf.get(t.from) ?? "成员",
-      to: nameOf.get(t.to) ?? "成员",
+      fromId: t.from,
+      fromName: nameOf.get(t.from) ?? "成员",
+      toId: t.to,
+      toName: nameOf.get(t.to) ?? "成员",
       amount: t.amount,
     }));
     return {
@@ -154,6 +148,7 @@ async function buildSnapshot(supabase: any, userId: string): Promise<Snapshot> {
     circles: circlesOut,
     myMonthSpendByCategory: [...byCat.entries()].map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount),
     myMonthTotal,
+    // deno-lint-ignore no-explicit-any
     recentExpenses: expRows.slice(0, 30).map((e: any) => ({
       circle: circleNameOf.get(e.circle_id) ?? "圈子",
       description: e.description,
@@ -163,88 +158,6 @@ async function buildSnapshot(supabase: any, userId: string): Promise<Snapshot> {
       spentAt: e.spent_at,
     })),
   };
-}
-
-async function answerWithClaude(apiKey: string, question: string, snap: Snapshot): Promise<string> {
-  const { default: Anthropic } = await import("npm:@anthropic-ai/sdk");
-  const client = new Anthropic({ apiKey });
-  const system = [
-    "你是「AA 记账」app 的记账助手。根据下面提供的 JSON 账本数据回答用户的问题。",
-    "要求：",
-    "- 只用数据里的事实，不要编造；数据里没有就说不知道或建议去哪看。",
-    "- 金额都是「分」(minor units)，回答时换算成元，保留两位小数，加 ¥ 前缀。",
-    "- net 为正表示「应收」(别人欠我)，为负表示「应付」(我欠别人)。",
-    "- 简洁、口语化中文，必要时用短列表。不要输出 JSON 或代码。",
-    "",
-    "账本数据：",
-    JSON.stringify(snap),
-  ].join("\n");
-  const resp = await client.messages.create({
-    model: "claude-opus-4-8",
-    max_tokens: 700,
-    system,
-    messages: [{ role: "user", content: question }],
-  });
-  const text = resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
-  return text || "我没太理解，换个说法再问问？";
-}
-
-function fallbackAnswer(question: string, snap: Snapshot): string {
-  const q = question.toLowerCase();
-  const lines: string[] = [];
-
-  // settle: 结账 / 结一下 / 结算
-  if (/结账|结一下|结算|怎么还|还钱/.test(question)) {
-    const all = snap.circles.flatMap((c) =>
-      c.settlements
-        .filter((t) => t.from === snap.me.name || t.to === snap.me.name)
-        .map((t) =>
-          t.from === snap.me.name
-            ? `· ${c.name}：你应付给 ${t.to} ¥${yuan(t.amount)}`
-            : `· ${c.name}：${t.from} 应付给你 ¥${yuan(t.amount)}`,
-        ),
-    );
-    return all.length ? "结算建议：\n" + all.join("\n") : "当前没有需要结算的款项，大家都两清啦 🎉";
-  }
-
-  // who paid: 谁付 / 谁出
-  if (/谁付|谁出|谁请|是谁/.test(question)) {
-    // Strip filler so the remaining chars are the expense keyword (e.g. 火锅).
-    const kw = question.replace(/[?？。.,，!！谁付的了出请是哪笔那顿上周这最近我和帮吗呢啊吧个一下找查]/g, "").trim();
-    const hits = snap.recentExpenses.filter(
-      (e) => (kw && (e.description.includes(kw) || (e.category ?? "").includes(kw))) || (!kw && true),
-    );
-    const list = (kw ? hits : snap.recentExpenses).slice(0, 5);
-    if (!list.length) return "最近没有相关账单记录。";
-    return (
-      (kw ? `关于「${kw}」：\n` : "最近的账单：\n") +
-      list.map((e) => `· ${e.spentAt} ${e.circle}「${e.description}」¥${yuan(e.amount)}，${e.payer} 付的`).join("\n")
-    );
-  }
-
-  // spending: 花了多少 / 花销 / 吃饭/餐饮 …
-  if (/花了多少|花销|花了|多少钱|开销|消费/.test(question)) {
-    if (!snap.myMonthSpendByCategory.length) return "这个月你还没有分摊到的花销。";
-    // category-specific?
-    const cat = snap.myMonthSpendByCategory.find((c) => question.includes(c.category));
-    if (cat) return `这个月你在「${cat.category}」上分摊了 ¥${yuan(cat.amount)}。`;
-    lines.push(`这个月你一共分摊了 ¥${yuan(snap.myMonthTotal)}：`);
-    for (const c of snap.myMonthSpendByCategory.slice(0, 6)) lines.push(`· ${c.category}：¥${yuan(c.amount)}`);
-    return lines.join("\n");
-  }
-
-  // balance / owe: 欠 / 结余 / 余额 (also the default overview)
-  const credit = snap.circles.filter((c) => c.myNet > 0);
-  const debit = snap.circles.filter((c) => c.myNet < 0);
-  const total = snap.circles.reduce((s, c) => s + c.myNet, 0);
-  if (total === 0 && !credit.length && !debit.length) return "你目前没有任何未结清的账,全部两清 ✅";
-  lines.push(total >= 0 ? `总的来说，你应收 ¥${yuan(total)}：` : `总的来说，你应付 ¥${yuan(-total)}：`);
-  for (const c of snap.circles) {
-    if (c.myNet > 0) lines.push(`· ${c.name}：应收 ¥${yuan(c.myNet)}`);
-    else if (c.myNet < 0) lines.push(`· ${c.name}：应付 ¥${yuan(-c.myNet)}`);
-  }
-  void q;
-  return lines.join("\n");
 }
 
 Deno.serve(async (req: Request) => {
@@ -267,23 +180,17 @@ Deno.serve(async (req: Request) => {
 
     const snap = await buildSnapshot(supabase, user.id);
 
-    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-    let answer: string;
-    let provider: string;
-    if (apiKey) {
-      try {
-        answer = await answerWithClaude(apiKey, question, snap);
-        provider = "claude";
-      } catch (_e) {
-        answer = fallbackAnswer(question, snap);
-        provider = "fallback(after-error)";
-      }
-    } else {
-      answer = fallbackAnswer(question, snap);
-      provider = "fallback";
+    const provider = await resolveLLM(supabase, null);
+    let reply: AgentReply;
+    let providerName = provider.name;
+    try {
+      reply = await provider.answerQuestion(question, snap);
+    } catch (_e) {
+      reply = await ruleProvider.answerQuestion(question, snap);
+      providerName = `${ruleProvider.name}(after-${provider.name}-error)`;
     }
 
-    return json({ answer, _provider: provider }, 200);
+    return json({ answer: reply.answer, action: reply.action ?? null, _provider: providerName }, 200);
   } catch (e) {
     return json({ error: String((e as Error)?.message ?? e) }, 500);
   }

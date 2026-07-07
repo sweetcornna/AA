@@ -16,14 +16,15 @@ const json = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
-function b64ToBytes(b64: string): Uint8Array {
+// Inferred return type is Uint8Array<ArrayBuffer>, which BlobPart requires.
+function b64ToBytes(b64: string) {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
 
-async function transcribeOpenAI(apiKey: string, bytes: Uint8Array, mimeType: string): Promise<string> {
+async function transcribeOpenAI(apiKey: string, bytes: Uint8Array<ArrayBuffer>, mimeType: string): Promise<string> {
   const ext = mimeType.includes("wav") ? "wav" : mimeType.includes("mp4") || mimeType.includes("m4a") ? "m4a" : "webm";
   const form = new FormData();
   form.append("file", new Blob([bytes], { type: mimeType || "audio/webm" }), `audio.${ext}`);

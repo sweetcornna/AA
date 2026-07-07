@@ -1,14 +1,19 @@
-import { useMutation } from "@tanstack/react-query";
+import { formatMoney } from "@aa/shared";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card, IconTile, Spinner, Svg } from "../../components/ui";
-import { askAgent } from "../../lib/api";
+import { askAgent, createSettlement } from "../../lib/api";
+import type { AgentSettleAction } from "../../lib/api";
 
 const SAMPLES = ["这个月我花了多少？", "帮我和大家结一下账", "最近那顿火锅是谁付的？", "我现在欠谁钱？"];
 
 interface Msg {
   role: "user" | "assistant";
   text: string;
+  /** A settle_up the agent proposed; rendered as a confirmation card. */
+  action?: AgentSettleAction;
+  actionState?: "pending" | "done" | "cancelled" | "error";
 }
 
 const ChatBubble = ({ kind }: { kind: "user" | "assistant" }) => (
@@ -17,16 +22,96 @@ const ChatBubble = ({ kind }: { kind: "user" | "assistant" }) => (
   </Svg>
 );
 
+/**
+ * The agent's write path: it only ever PROPOSES a settlement — nothing is
+ * written until the user taps 确认. Confirming inserts the settlement from the
+ * client (under RLS), exactly like doing it by hand on the balances page.
+ */
+function SettleCard({ action, state, onConfirm, onCancel, busy }: {
+  action: AgentSettleAction;
+  state: NonNullable<Msg["actionState"]>;
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  return (
+    <Card className="max-w-[80%] p-3.5">
+      <div className="text-[13px] font-semibold" style={{ color: "var(--label3)" }}>结算确认 · {action.circleName}</div>
+      <div className="mt-1.5 text-[15px] leading-relaxed">
+        <span className="font-medium">{action.fromName}</span> 支付给 <span className="font-medium">{action.toName}</span>
+        <span className="tnum ml-1 font-semibold">{formatMoney(action.amountMinor, action.currency)}</span>
+      </div>
+      {state === "pending" && (
+        <div className="mt-2.5 flex gap-2">
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="flex-1 rounded-[9px] py-2 text-[14px] font-semibold text-white disabled:opacity-50"
+            style={{ background: "var(--blue)" }}
+          >
+            {busy ? "记录中…" : "确认结算"}
+          </button>
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="flex-1 rounded-[9px] py-2 text-[14px] font-medium disabled:opacity-50"
+            style={{ background: "var(--seg-bg)", color: "var(--ink)" }}
+          >
+            取消
+          </button>
+        </div>
+      )}
+      {state === "done" && <div className="mt-2 text-[13px]" style={{ color: "var(--green)" }}>✓ 已记录这笔结算</div>}
+      {state === "cancelled" && <div className="mt-2 text-[13px]" style={{ color: "var(--label3)" }}>已取消</div>}
+      {state === "error" && <div className="mt-2 text-[13px]" style={{ color: "var(--red)" }}>记录失败，请到圈子的余额页手动结算。</div>}
+    </Card>
+  );
+}
+
 export function AssistantPage() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
+  const qc = useQueryClient();
 
   const ask = useMutation({
     mutationFn: (q: string) => askAgent(q),
-    onSuccess: (answer) => setMsgs((m) => [...m, { role: "assistant", text: answer }]),
+    onSuccess: (reply) =>
+      setMsgs((m) => [
+        ...m,
+        { role: "assistant", text: reply.answer, action: reply.action ?? undefined, actionState: reply.action ? "pending" : undefined },
+      ]),
     onError: (e: Error) => setMsgs((m) => [...m, { role: "assistant", text: `出错了：${e.message}` }]),
   });
+
+  const settle = useMutation({
+    mutationFn: (a: AgentSettleAction) =>
+      createSettlement({
+        circleId: a.circleId,
+        fromUser: a.fromUser,
+        toUser: a.toUser,
+        amountMinor: a.amountMinor,
+        currency: a.currency,
+        note: "AI 助手记录",
+      }),
+  });
+
+  function setActionState(index: number, state: NonNullable<Msg["actionState"]>) {
+    setMsgs((m) => m.map((msg, i) => (i === index ? { ...msg, actionState: state } : msg)));
+  }
+
+  async function confirmSettle(index: number, a: AgentSettleAction) {
+    try {
+      await settle.mutateAsync(a);
+      setActionState(index, "done");
+      qc.invalidateQueries({ queryKey: ["balances", a.circleId] });
+      qc.invalidateQueries({ queryKey: ["my-balances"] });
+      qc.invalidateQueries({ queryKey: ["settlements", a.circleId] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
+    } catch {
+      setActionState(index, "error");
+    }
+  }
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -59,6 +144,7 @@ export function AssistantPage() {
                 <div className="mt-3 text-[18px] font-semibold tracking-[-0.02em]">AI 记账助手</div>
                 <div className="mt-1.5 text-[14px] leading-relaxed" style={{ color: "var(--label2)" }}>
                   问问你的账本：花销、结余、谁付的、怎么结算。
+                  <br />让我帮你结账时，会先出确认卡片再记录。
                 </div>
               </div>
             </Card>
@@ -82,7 +168,7 @@ export function AssistantPage() {
         )}
 
         {msgs.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+          <div key={i} className={`flex flex-col gap-2 ${m.role === "user" ? "items-end" : "items-start"}`}>
             <div
               className="max-w-[80%] whitespace-pre-wrap rounded-[18px] px-3.5 py-2.5 text-[15px] leading-relaxed"
               style={
@@ -93,6 +179,15 @@ export function AssistantPage() {
             >
               {m.text}
             </div>
+            {m.action && m.actionState && (
+              <SettleCard
+                action={m.action}
+                state={m.actionState}
+                busy={settle.isPending}
+                onConfirm={() => confirmSettle(i, m.action!)}
+                onCancel={() => setActionState(i, "cancelled")}
+              />
+            )}
           </div>
         ))}
         {ask.isPending && (
