@@ -23,7 +23,7 @@ AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不�
 - [ ] `/srv/aa` 所在 filesystem 与 Docker `DockerRootDir` 所在 filesystem 各有至少 40 GiB 可用空间，且容量门通过；
 - [ ] 聊天中曾暴露的服务器密码和 Cloudflare token 已撤销并轮换；已验证两把独立 SSH key 与回滚通道，并关闭 sshd password authentication；DNS 只用最小 Zone DNS token；
 - [ ] staging/production 的 Resend、OpenAI、数据库/JWT、备份凭据完全分开；
-- [ ] Azure Blob 容器和 VM managed identity 权限已配置，主机已从可信来源安装并验证 `age` 与 `azcopy`；不使用长期 SAS URL；
+- [ ] 备份模式已显式批准：默认 `azure-blob` 时 Azure Blob 容器和 VM managed identity 权限已配置，主机已从可信来源安装并验证 `age` 与 `azcopy`，且不使用长期 SAS URL；临时采用 `local` 时已接受同盘丢失风险并继续把 off-host copy 作为未完成 gate；
 - [ ] Azure effective NSG 已确认只开放批准的 22/80/443，或 WARP UDP 28526 例外已经明确批准；host INPUT=ACCEPT 不能替代控制面证据；
 - [ ] `api.cornna.xyz`、`staging-api.cornna.xyz` 的 DNS/TLS 变更已单独批准；
 - [ ] 已加密备份并恢复验证双 SSH key、Nginx/SNI、Xray unit/drop-in/config、WARP、Fail2ban、`/opt/light-panel/*` Docker bind data 与 certbot 账号/证书/续期配置，并记录回滚命令；
@@ -136,20 +136,23 @@ single-stack 由 operator 在受限 secret manager 中创建一个 production `0
 sudo python3 infra/supabase-selfhost/scripts/generate-env.py \
   production /srv/aa/production/stack.env \
   --profile single-stack \
+  --destination local \
   --fingerprint <64-HEX-SOURCE-FINGERPRINT> \
   --smtp-admin-email <VERIFIED-PRODUCTION-SENDER> \
   --provider-secrets <ROOT-ONLY-PRODUCTION-PROVIDER-JSON> \
-  --backup-recipient <AGE-PUBLIC-RECIPIENT> \
-  --azure-storage-account <STORAGE-ACCOUNT> \
-  --azure-storage-container <PRODUCTION-CONTAINER>
+  --backup-recipient <AGE-PUBLIC-RECIPIENT>
 ```
+
+`--destination` 只接受 `local` 或 `azure-blob`；`azure-blob` 是默认值。选择默认 Azure 模式时，仍必须同时提供 `--azure-storage-account <STORAGE-ACCOUNT>` 和 `--azure-storage-container <PRODUCTION-CONTAINER>`；local 模式会把 `BACKUP_DESTINATION=local` 写入 env，且不要求或伪造 Azure 配置。
 
 校验：
 
 ```bash
 sudo python3 infra/supabase-selfhost/scripts/validate-env.py \
   /srv/aa/production/stack.env \
-  --profile single-stack --require-root-owner
+  --profile single-stack \
+  --destination local \
+  --require-root-owner
 ```
 
 single-stack 不调用 `validate-pair.py`，因为没有 pair。该跳过明确表示 staging/production identity、data、port、provider 和 secret isolation proof **没有执行**；脚本没有被删除或放宽，切回 dual-stack 时仍必须对两个 env 运行它。
@@ -270,25 +273,33 @@ sudo infra/supabase-selfhost/scripts/health-check.sh \
 
 single-stack 没有 staging，因此不具备以下原 dual-stack 证明：先在隔离 staging 执行 Auth/OTP edge cases、REST/RPC/RLS、Realtime、functions、provider error/timeout、log privacy 和 destructive cleanup，再以相同 fingerprint promotion。这个缺口是 operator 明确接受的风险，不得把 production 当成 staging，也不得对 production 运行 `verify-backend.mjs`、service-role/admin fixture 或 destructive suite。
 
-替代但不等价的 production gates 是：全部本地/CI contract tests、isolated restore drill、non-destructive ordinary-user production canary、health check、日志隐私抽查、备份 read-back、资源/OOM/Swap 告警。任何一项失败都停止变更并走 forward fix。
+替代但不等价的 production gates 是：全部本地/CI contract tests、isolated restore drill、non-destructive ordinary-user production canary、health check、日志隐私抽查、加密备份结构与 checksum 校验（Azure 模式另含 Blob read-back）、资源/OOM/Swap 告警。任何一项失败都停止变更并走 forward fix。
 
 ## Backup 与 restore drill
 
 第一版能力只声明每日 encrypted logical backup，默认 RPO 24h、RTO 4h；没有实施 PostgreSQL base backup/WAL archive 前不得声称 PITR。
 
-VM managed identity 需对 production Blob container 有最小读写权限，用于上传后的 read-back 校验；先安装 `age`、`azcopy`。container 必须在 Azure 侧配置已批准的 lifecycle retention、soft delete/versioning，并按组织要求启用 immutability；这些是外部配置 gate，不能由本仓库脚本或本地 30 天清理代替。先创建固定的 root-only 非 symlink 目录：
+`backup.sh` 的 `--destination` 只接受 `local` 或 `azure-blob`，且默认仍是 `azure-blob`，因此省略 flag 时原 Azure 行为不变。Azure 模式要求 VM managed identity 对 production Blob container 有最小读写权限，用于上传后的 read-back 校验；先安装 `age`、`azcopy`。container 必须在 Azure 侧配置已批准的 lifecycle retention、soft delete/versioning，并按组织要求启用 immutability；这些是外部配置 gate，不能由本仓库脚本或本地 30 天清理代替。
+
+当前 operator 明确选择临时 local-only。接受的风险是：加密备份与数据库位于同一台主机的同一块磁盘上，磁盘丢失会同时丢失数据库和备份。local-only 备份不防主机磁盘损坏、丢失或被破坏；在建立并验证 off-host copy 之前，这不能称为真正的 disaster-recovery plan。
+
+两种模式都先创建固定的 root-only 非 symlink 目录：
 
 ```bash
 sudo install -d -o root -g root -m 0700 /srv/aa/backups/production
 ```
 
-每天执行：
+当前 local-only 的精确每日命令是：
 
 ```bash
-sudo infra/supabase-selfhost/scripts/backup.sh /srv/aa/production/stack.env
+sudo infra/supabase-selfhost/scripts/backup.sh \
+  --destination local \
+  /srv/aa/production/stack.env
 ```
 
-脚本先持有该 stack 的 backup lock，再选择 UTC timestamp；把 custom-format `pg_dump` 同时流经同一数据库容器的 `pg_restore --list` 和 age encryption，不在 host 写明文 archive。新 archive 保留 owner/ACL；旧版以 `--no-owner --no-acl` 生成的 archive 不得作为 privilege recovery 或 production promotion 证据。脚本只在加密 pipeline 成功后以 no-clobber 原子链接分别发布 `.age` 与 checksum，用 managed identity 上传并下载到 mode-restricted 临时目录复核远端 ciphertext，且只按 exact environment filename pattern 清理本地 30 天前文件。调度器必须对非零退出告警，并每天监控最新成功备份年龄。
+Azure 模式可显式写成 `sudo infra/supabase-selfhost/scripts/backup.sh --destination azure-blob /srv/aa/production/stack.env`，也可省略 flag 使用同一默认值。
+
+脚本在两种模式下都先持有该 stack 的 backup lock，再选择 UTC timestamp；把 custom-format `pg_dump` 同时流经同一数据库容器的 `pg_restore --list` 和 age encryption，不在 host 写明文 archive。两种模式都要求 `age`、非空且结构有效的 custom archive、SHA-256 checksum，并且只在加密 pipeline 成功后以 no-clobber 原子链接分别发布 `.age` 与 checksum；目标文件已存在时 fail closed。新 archive 保留 owner/ACL；旧版以 `--no-owner --no-acl` 生成的 archive 不得作为 privilege recovery 或 production promotion 证据。Azure 模式才额外要求 `azcopy`，用 managed identity 上传并下载到 mode-restricted 临时目录复核远端 ciphertext；local 模式只跳过该远端上传与 read-back。两种模式都只按 exact environment filename pattern 清理本地 30 天前文件。调度器必须对非零退出告警，并每天监控最新成功备份年龄。
 
 production promotion 前必须用 `compose.restore.yml` 做 database-only restore drill。该 Compose 只有固定 digest 的 PostgreSQL，不包含 gateway、Auth、Realtime、Functions、SMTP/provider 配置或 host port，并连接独立的 internal network 与 `restore-db-*` volumes。
 
@@ -307,19 +318,22 @@ sudo python3 infra/supabase-selfhost/scripts/validate-restore-env.py \
 
 环境文件只包含 `AA_ENVIRONMENT=restore`、随机化 `aa-restore-*` stack ID、固定 restore-only upstream 路径，以及独立 PostgreSQL/JWT secrets。validator 要求常规非 symlink 文件、root owner、mode `0600` 或更严格，并在内存中证明 stack/database/JWT 与 production 分离而不输出值或 secret digest；dual-stack 仍要求同时与 staging、production 比较。backup、checksum 和 age identity 同样必须是 root-owned、不可被 group/other 读取的非 symlink 常规文件。
 
-先从 Blob 取回同名 production `.dump.age` 与 `.dump.age.sha256`；single-stack 会拒绝 staging 文件名。single-stack 无法安全并行容纳 production 与 restore database；先用非破坏性的 `stop` 停止 production，再执行 drill：
+Azure 模式先从 Blob 取回同名 production `.dump.age` 与 `.dump.age.sha256` 到 root-only restore 目录。local 模式不取回 Blob object，直接把 `/srv/aa/backups/production` 中同名的 encrypted backup 与 checksum 路径传给 drill；single-stack 仍会拒绝 staging 文件名。single-stack 无法安全并行容纳 production 与 restore database；先用非破坏性的 `stop` 停止 production，再执行 local-only drill：
 
 ```bash
 sudo infra/supabase-selfhost/scripts/compose.sh \
   --profile single-stack /srv/aa/production/stack.env stop
 sudo infra/supabase-selfhost/scripts/restore-drill.sh \
   --profile single-stack \
+  --destination local \
   /srv/aa/restore/<DRILL-ID>.env \
-  /srv/aa/restore/<BACKUP>.dump.age \
-  /srv/aa/restore/<BACKUP>.dump.age.sha256 \
+  /srv/aa/backups/production/<BACKUP>.dump.age \
+  /srv/aa/backups/production/<BACKUP>.dump.age.sha256 \
   /srv/aa/restore/<AGE-IDENTITY> \
   /srv/aa/production/stack.env
 ```
+
+对已从 Blob 取回的文件运行 Azure drill 时，使用 `--destination azure-blob`（或省略该 flag）并继续传入 restore 目录中的 ciphertext/checksum 路径。两种来源都执行相同的 isolated restore-only stack、随机 project identity、checksum verification、forward-migration roll-forward，以及 schema/RLS/RPC/ownership/grant assertions。
 
 脚本在任何解密/Docker 操作前执行部署 env disjoint、严格单行 checksum 和 identity 检查，并拒绝已有同 project label 的 container/network/volume。checksum 只证明所选 ciphertext 的完整性，不证明备份来源；当前还没有获批的离线签名/同 snapshot 数据 manifest 设计，因此不得声称 authenticated provenance 或全表字节级 fidelity。
 
@@ -342,7 +356,7 @@ single-stack 只有以下全部签署后才可单独批准 production mutation�
 - operator 对本次无 staging 直接 production deviation 再次签署；
 - source commit、image digest、function artifact fingerprint 与批准 evidence 相同；
 - migration ledger/hash 完全匹配；
-- backup 新鲜、Blob copy 存在、isolated restore drill 通过；
+- backup 新鲜、isolated restore drill 通过；若仍是 local-only，已再次签署同盘丢失风险，且 Blob/off-host copy 仍明确记录为真正 disaster recovery 前的未完成 gate；
 - DNS/TLS/SNI、监控、磁盘/内存、证书和备份年龄告警通过；
 - production secret/provider/sender 只存在于受保护 production env；
 - credentials 已轮换；

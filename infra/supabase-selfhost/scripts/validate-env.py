@@ -14,14 +14,17 @@ TARGETS = {
     "staging": ("aa-staging-primary", "https://staging-api.cornna.xyz", "18100", "/srv/aa/staging"),
     "production": ("aa-production-primary", "https://api.cornna.xyz", "18101", "/srv/aa/production"),
 }
-REQUIRED = {
+BACKUP_DESTINATIONS = ("local", "azure-blob")
+COMMON_REQUIRED = {
     "AA_ENVIRONMENT", "AA_STACK_ID", "AA_SOURCE_FINGERPRINT", "AA_RUNTIME_ROOT", "AA_UPSTREAM_DIR",
     "AA_FUNCTIONS_DIR", "AA_TEMPLATE_DIR", "AA_KONG_BIND_HOST", "AA_KONG_HTTP_PORT",
     "SUPABASE_PUBLIC_URL", "API_EXTERNAL_URL", "SITE_URL", "POSTGRES_PASSWORD", "JWT_SECRET",
     "ANON_KEY", "SERVICE_ROLE_KEY", "SECRET_KEY_BASE", "REALTIME_DB_ENC_KEY", "SMTP_HOST",
     "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_ADMIN_EMAIL", "SMTP_SENDER_NAME", "OPENAI_API_KEY",
-    "BACKUP_DIR", "BACKUP_AGE_RECIPIENT", "AZURE_STORAGE_ACCOUNT", "AZURE_STORAGE_CONTAINER",
+    "BACKUP_DIR", "BACKUP_AGE_RECIPIENT",
 }
+AZURE_REQUIRED = {"AZURE_STORAGE_ACCOUNT", "AZURE_STORAGE_CONTAINER"}
+OPTIONAL = {"BACKUP_DESTINATION"}
 PLACEHOLDER = re.compile(r"placeholder|change.?me|<[^>]+>|your[-_]|example\.com", re.I)
 SAFE_SECRET = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -63,6 +66,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("env_file", type=Path)
     parser.add_argument("--profile", choices=("dual-stack", "single-stack"), default="dual-stack")
+    parser.add_argument("--destination", choices=BACKUP_DESTINATIONS)
     parser.add_argument("--require-root-owner", action="store_true")
     args = parser.parse_args()
 
@@ -74,8 +78,16 @@ def main() -> None:
     if args.require_root_owner and info.st_uid != 0:
         raise SystemExit("deployed environment file must be owned by root")
     values = parse(args.env_file)
-    missing = sorted(REQUIRED - values.keys())
-    unknown = sorted(values.keys() - REQUIRED)
+    configured_destination = values.get("BACKUP_DESTINATION")
+    if configured_destination is not None and configured_destination not in BACKUP_DESTINATIONS:
+        raise SystemExit("BACKUP_DESTINATION is invalid")
+    destination = args.destination or configured_destination or "azure-blob"
+    if args.destination is not None and configured_destination is not None and args.destination != configured_destination:
+        raise SystemExit("requested backup destination does not match BACKUP_DESTINATION")
+    required = COMMON_REQUIRED | (AZURE_REQUIRED if destination == "azure-blob" else set())
+    allowed = COMMON_REQUIRED | AZURE_REQUIRED | OPTIONAL
+    missing = sorted(required - values.keys())
+    unknown = sorted(values.keys() - allowed)
     if missing or unknown:
         raise SystemExit(f"environment keys mismatch: missing={missing}, unknown={unknown}")
     if any(not value or PLACEHOLDER.search(value) for value in values.values()):
@@ -121,15 +133,18 @@ def main() -> None:
     validate_jwt(values["SERVICE_ROLE_KEY"], values["JWT_SECRET"], "service_role")
     if not re.fullmatch(r"age1[0-9a-z]{40,}", values["BACKUP_AGE_RECIPIENT"]):
         raise SystemExit("BACKUP_AGE_RECIPIENT is invalid")
-    if not re.fullmatch(r"[a-z0-9]{3,24}", values["AZURE_STORAGE_ACCOUNT"]):
+    azure_keys = AZURE_REQUIRED & values.keys()
+    if azure_keys and azure_keys != AZURE_REQUIRED:
+        raise SystemExit("Azure storage account and container must be provided together")
+    if "AZURE_STORAGE_ACCOUNT" in values and not re.fullmatch(r"[a-z0-9]{3,24}", values["AZURE_STORAGE_ACCOUNT"]):
         raise SystemExit("AZURE_STORAGE_ACCOUNT is invalid")
-    if not re.fullmatch(r"[a-z0-9-]{3,63}", values["AZURE_STORAGE_CONTAINER"]):
+    if "AZURE_STORAGE_CONTAINER" in values and not re.fullmatch(r"[a-z0-9-]{3,63}", values["AZURE_STORAGE_CONTAINER"]):
         raise SystemExit("AZURE_STORAGE_CONTAINER is invalid")
     for key in ("SUPABASE_PUBLIC_URL", "API_EXTERNAL_URL", "SITE_URL"):
         parsed = urlparse(values[key])
         if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port:
             raise SystemExit(f"{key} is not a canonical HTTPS URL")
-    print(f"Validated secret-safe {environment} environment contract for {args.profile}.")
+    print(f"Validated secret-safe {environment} environment contract for {args.profile} with {destination} backups.")
 
 
 if __name__ == "__main__":

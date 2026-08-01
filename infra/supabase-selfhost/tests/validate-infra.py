@@ -438,6 +438,16 @@ def main() -> None:
             "--azure-storage-account", "aabackupaccount",
             "--azure-storage-container", "aa-staging",
         ])
+        missing_azure_env = root / "missing-azure.env"
+        expect_failure([
+            "python3", str(INFRA / "scripts/generate-env.py"), "production", str(missing_azure_env),
+            "--profile", "single-stack",
+            "--fingerprint", fingerprint,
+            "--smtp-admin-email", "aa-production-local@cornna.xyz",
+            "--provider-secrets", str(provider_production),
+            "--backup-recipient", "age1" + "s" * 58,
+        ])
+        check(not missing_azure_env.exists(), "default azure-blob generation succeeded without Azure storage")
         single_production_env = root / "single-production.env"
         subprocess.run([
             "python3", str(INFRA / "scripts/generate-env.py"), "production", str(single_production_env),
@@ -453,6 +463,32 @@ def main() -> None:
             "python3", str(INFRA / "scripts/validate-env.py"), str(single_production_env),
             "--profile", "single-stack",
         ], check=True, stdout=subprocess.DEVNULL)
+        local_production_env = root / "local-production.env"
+        subprocess.run([
+            "python3", str(INFRA / "scripts/generate-env.py"), "production", str(local_production_env),
+            "--profile", "single-stack",
+            "--destination", "local",
+            "--fingerprint", fingerprint,
+            "--smtp-admin-email", "aa-production-local@cornna.xyz",
+            "--provider-secrets", str(provider_production),
+            "--backup-recipient", "age1" + "t" * 58,
+        ], check=True, stdout=subprocess.DEVNULL)
+        local_values = dict(line.split("=", 1) for line in local_production_env.read_text().splitlines())
+        check(local_values["BACKUP_DESTINATION"] == "local", "local environment destination mismatch")
+        check("AZURE_STORAGE_ACCOUNT" not in local_values, "local environment unexpectedly requires an Azure account")
+        check("AZURE_STORAGE_CONTAINER" not in local_values, "local environment unexpectedly requires an Azure container")
+        subprocess.run([
+            "python3", str(INFRA / "scripts/validate-env.py"), str(local_production_env),
+            "--profile", "single-stack",
+        ], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([
+            "python3", str(INFRA / "scripts/validate-env.py"), str(local_production_env),
+            "--profile", "single-stack", "--destination", "local",
+        ], check=True, stdout=subprocess.DEVNULL)
+        expect_failure([
+            "python3", str(INFRA / "scripts/validate-env.py"), str(local_production_env),
+            "--profile", "single-stack", "--destination", "azure-blob",
+        ])
 
         mismatched_fingerprint = root / "mismatched-fingerprint.env"
         mismatched_fingerprint.write_text(envs["production"].read_text().replace(
@@ -805,7 +841,8 @@ def main() -> None:
 
     restore_script = (INFRA / "scripts/restore-drill.sh").read_text()
     for required in (
-        'PROFILE=dual-stack', 'restore_validation+=(--disjoint-from "$deployment_env")',
+        'PROFILE=dual-stack', 'DESTINATION=azure-blob', '--destination local|azure-blob',
+        '--destination "$DESTINATION"', 'restore_validation+=(--disjoint-from "$deployment_env")',
         'capacity-check.sh" --profile "$PROFILE" /srv/aa',
         'compose.restore.single-stack.yml', "Production must be stopped before a single-stack restore drill",
         "Single-stack restore drills only accept production backups",
@@ -822,6 +859,7 @@ def main() -> None:
         "public.cleanup_canary_circle(uuid,text)",
         "public.update_circle(uuid,text,text,character)",
         "down --volumes", "checksum proved ciphertext integrity, not backup provenance",
+        "this drill uses a local-only backup that is not protected against loss of this host disk",
     ):
         check(required in restore_script, f"restore drill contract missing: {required}")
     for forbidden in ("pg_restore -U postgres -d postgres", "--clean", "--if-exists", "--no-owner", "--no-acl", "mktemp"):
@@ -916,6 +954,9 @@ def main() -> None:
         "host OOM 或单容器 OOM 风险", "Xray、beszel、beszel-agent 和 uptime-kuma",
         "isolation proof **没有执行**", "drill 前 production 必须停止",
         "Single-stack recovery expectations", "RPO 24h、RTO 4h",
+        "--destination local", "`azure-blob` 是默认值",
+        "磁盘丢失会同时丢失数据库和备份", "off-host copy",
+        "不能称为真正的 disaster-recovery plan",
     ):
         check(required in runbook, f"single-stack runbook disclosure missing: {required}")
 
@@ -978,14 +1019,43 @@ def main() -> None:
 
     backup_script = (INFRA / "scripts/backup.sh").read_text()
     for required in (
-        "validate-env.py", "--project-name \"$AA_STACK_ID\"", "pg_restore --list", "pg_dump -U postgres -d postgres --format=custom",
+        "DESTINATION=azure-blob", "--destination local|azure-blob", "validate-env.py",
+        '--destination "$DESTINATION"', "--project-name \"$AA_STACK_ID\"", "pg_restore --list",
+        "pg_dump -U postgres -d postgres --format=custom",
         "tee \"$toc_fifo\"", "age --recipient", "--from-to BlobLocal", "Azure Blob read-back hash mismatch", "-maxdepth 1",
         'lock_file="$BACKUP_DIR/.${AA_STACK_ID}.backup.lock"', "flock 9",
         'ln -- "$partial" "$encrypted"', 'ln -- "$checksum_partial" "$checksum"',
+        'if [[ "$DESTINATION" == "azure-blob" ]]; then\n  required_commands+=(azcopy)',
+        "this backup is local-only and is not protected against loss of this host disk",
     ):
         check(required in backup_script, f"backup verification contract missing: {required}")
-    for forbidden in ("--no-owner", "--no-acl", "plain=", "pg_dump -U postgres -d postgres --format=custom >"):
+    azure_upload_index = backup_script.index('if [[ "$DESTINATION" == "azure-blob" ]]; then\n  readback=')
+    for unconditional in (
+        'lock_file="$BACKUP_DIR/.${AA_STACK_ID}.backup.lock"', "flock 9", 'stamp="$(date -u',
+        "pg_restore --list", "pg_dump -U postgres -d postgres --format=custom", 'tee "$toc_fifo"',
+        'age --recipient "$BACKUP_AGE_RECIPIENT" --output "$partial"', 'wait "$toc_pid"',
+        'test -s "$partial"', 'sha256sum -- "$partial"', 'printf \'%s  %s\\n\'',
+        'ln -- "$partial" "$encrypted"', 'ln -- "$checksum_partial" "$checksum"',
+    ):
+        check(backup_script.index(unconditional) < azure_upload_index, f"local backup can bypass invariant: {unconditional}")
+    check(
+        '\nfi\n\nwhile IFS= read -r -d \'\' expired; do' in backup_script[azure_upload_index:],
+        "local backup retention cleanup is not outside the Azure-only branch",
+    )
+    for forbidden in (
+        "--no-owner", "--no-acl", "plain=", "pg_dump -U postgres -d postgres --format=custom >",
+        "--skip-encryption", "--skip-checksum", "--skip-structural-check", "--skip-lock", "--skip-retention",
+    ):
         check(forbidden not in backup_script, f"backup contains forbidden behavior: {forbidden}")
+    validator_source = (INFRA / "scripts/validate-env.py").read_text()
+    generator_source = (INFRA / "scripts/generate-env.py").read_text()
+    for source, label in ((validator_source, "validator"), (generator_source, "generator")):
+        check('BACKUP_DESTINATIONS = ("local", "azure-blob")' in source, f"backup destination choices missing from {label}")
+        check('"BACKUP_DESTINATION"' in source, f"persisted backup destination missing from {label}")
+    check('args.destination or configured_destination or "azure-blob"' in validator_source, "environment validation does not default to azure-blob")
+    check('AZURE_REQUIRED if destination == "azure-blob" else set()' in validator_source, "Azure environment requirements are not destination-bound")
+    check('parser.add_argument("--destination", choices=BACKUP_DESTINATIONS, default="azure-blob")' in generator_source, "environment generation does not default to azure-blob")
+    check('args.destination == "azure-blob"' in generator_source, "Azure generation requirements were weakened")
 
     migration_runner = (INFRA / "scripts/run-migrations.py").read_text()
     check("Applied migration ledger contains a file absent from the source directory" in migration_runner, "migration runner must reject unknown ledger entries")
