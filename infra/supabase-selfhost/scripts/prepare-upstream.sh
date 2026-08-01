@@ -56,6 +56,7 @@ mkdir -p "$WORK_DIR/output/api" "$WORK_DIR/output/db" "$WORK_DIR/output/function
 install -m 0555 "$SOURCE/docker/volumes/api/kong-entrypoint.sh" "$WORK_DIR/output/api/kong-entrypoint.sh"
 install -m 0444 "$SOURCE/docker/volumes/db/_supabase.sql" "$WORK_DIR/output/db/_supabase.sql"
 install -m 0444 "$SOURCE/docker/volumes/db/realtime.sql" "$WORK_DIR/output/db/realtime.sql"
+install -m 0444 "$SOURCE/docker/volumes/db/webhooks.sql" "$WORK_DIR/output/db/webhooks.sql"
 install -m 0444 "$SOURCE/docker/volumes/db/roles.sql" "$WORK_DIR/output/db/roles.sql"
 install -m 0444 "$SOURCE/docker/volumes/db/jwt.sql" "$WORK_DIR/output/db/jwt.sql"
 install -m 0444 "$SOURCE/docker/volumes/functions/main/index.ts" "$WORK_DIR/output/functions/main/index.ts"
@@ -77,6 +78,7 @@ expected = {
     "db/jwt.sql": "0444",
     "db/realtime.sql": "0444",
     "db/roles.sql": "0444",
+    "db/webhooks.sql": "0444",
     "functions/main/index.ts": "0444",
 }
 actual = set()

@@ -39,11 +39,13 @@ EXPECTED_RETAINED_UPSTREAM_FILES = {
     "db/jwt.sql": "0444",
     "db/realtime.sql": "0444",
     "db/roles.sql": "0444",
+    "db/webhooks.sql": "0444",
     "functions/main/index.ts": "0444",
 }
 EXPECTED_DB_INIT_TARGETS = {
     "db/_supabase.sql": "/docker-entrypoint-initdb.d/migrations/97-_supabase.sql",
     "db/realtime.sql": "/docker-entrypoint-initdb.d/migrations/99-realtime.sql",
+    "db/webhooks.sql": "/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql",
     "db/roles.sql": "/docker-entrypoint-initdb.d/init-scripts/99-roles.sql",
     "db/jwt.sql": "/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql",
 }
@@ -1073,10 +1075,20 @@ def main() -> None:
         in prepare_upstream,
         "_supabase.sql must be extracted from the verified archive",
     )
+    check(
+        'install -m 0444 "$SOURCE/docker/volumes/db/webhooks.sql" "$WORK_DIR/output/db/webhooks.sql"'
+        in prepare_upstream,
+        "webhooks.sql must be extracted from the verified archive",
+    )
+    check(
+        EXPECTED_DB_INIT_TARGETS["db/webhooks.sql"] < EXPECTED_DB_INIT_TARGETS["db/roles.sql"],
+        "webhooks init target must sort before roles",
+    )
     for compose_source in (source, restore_source):
         check(
-            "webhooks.sql is intentionally omitted" in compose_source and "optional pg_net" in compose_source,
-            "webhooks.sql exclusion rationale is missing",
+            "webhooks.sql creates supabase_functions_admin before roles.sql alters it" in compose_source
+            and "logs.sql and pooler.sql remain excluded" in compose_source,
+            "database init inclusion and exclusion rationale is missing",
         )
     for required in (
         '"path": relative', '"type": "file"', '"mode": mode', '"sha256": hashlib.sha256',
