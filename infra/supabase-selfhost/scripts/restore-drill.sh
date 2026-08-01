@@ -3,20 +3,37 @@ set -euo pipefail
 umask 077
 
 usage() {
-  printf '%s\n' 'Usage: restore-drill.sh [--profile dual-stack|single-stack] <restore-env-file> <backup.age> <backup.age.sha256> <age-identity> <staging-env> <production-env>' >&2
-  printf '%s\n' '       restore-drill.sh --profile single-stack <restore-env-file> <backup.age> <backup.age.sha256> <age-identity> <production-env>' >&2
+  printf '%s\n' 'Usage: restore-drill.sh [--profile dual-stack|single-stack] [--destination local|azure-blob] <restore-env-file> <backup.age> <backup.age.sha256> <age-identity> <staging-env> <production-env>' >&2
+  printf '%s\n' '       restore-drill.sh --profile single-stack [--destination local|azure-blob] <restore-env-file> <backup.age> <backup.age.sha256> <age-identity> <production-env>' >&2
   exit 2
 }
 
 PROFILE=dual-stack
-if [[ "${1:-}" == "--profile" ]]; then
-  [[ "$#" -ge 2 ]] || usage
-  PROFILE="$2"
-  shift 2
-fi
+DESTINATION=azure-blob
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --profile)
+      [[ "$#" -ge 2 ]] || usage
+      PROFILE="$2"
+      shift 2
+      ;;
+    --destination)
+      [[ "$#" -ge 2 ]] || usage
+      DESTINATION="$2"
+      shift 2
+      ;;
+    --) shift; break ;;
+    -*) printf 'Unknown option: %s.\n' "$1" >&2; usage ;;
+    *) break ;;
+  esac
+done
 case "$PROFILE" in
   dual-stack|single-stack) ;;
   *) printf 'Unknown deployment profile: %s.\n' "$PROFILE" >&2; usage ;;
+esac
+case "$DESTINATION" in
+  local|azure-blob) ;;
+  *) printf 'Unknown backup destination: %s.\n' "$DESTINATION" >&2; usage ;;
 esac
 
 [[ "$#" -ge 4 ]] || usage
@@ -40,7 +57,8 @@ MIGRATIONS_DIR="$ROOT_DIR/supabase/migrations"
 
 restore_validation=(python3 "$VALIDATOR" "$ENV_FILE" --profile "$PROFILE" --require-root-owner)
 for deployment_env in "${DEPLOYMENT_ENVS[@]}"; do
-  python3 "$INFRA_DIR/scripts/validate-env.py" "$deployment_env" --profile "$PROFILE" --require-root-owner
+  python3 "$INFRA_DIR/scripts/validate-env.py" "$deployment_env" --profile "$PROFILE" \
+    --destination "$DESTINATION" --require-root-owner
   restore_validation+=(--disjoint-from "$deployment_env")
 done
 "${restore_validation[@]}"
@@ -51,6 +69,9 @@ aa_load_env "$ENV_FILE"
 for command in age docker flock python3 sha256sum; do
   command -v "$command" >/dev/null || { printf '%s is required.\n' "$command" >&2; exit 1; }
 done
+if [[ "$DESTINATION" == "local" ]]; then
+  printf '%s\n' 'WARNING: this drill uses a local-only backup that is not protected against loss of this host disk.' >&2
+fi
 
 python3 - "$BACKUP" "$CHECKSUM" "$IDENTITY" <<'PY'
 import os

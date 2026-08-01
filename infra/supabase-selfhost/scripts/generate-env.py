@@ -25,6 +25,7 @@ TARGETS = {
         "root": "/srv/aa/production",
     },
 }
+BACKUP_DESTINATIONS = ("local", "azure-blob")
 SAFE_SECRET = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
@@ -65,8 +66,9 @@ def main() -> None:
     parser.add_argument("--smtp-admin-email", required=True)
     parser.add_argument("--provider-secrets", required=True, type=Path)
     parser.add_argument("--backup-recipient", required=True)
-    parser.add_argument("--azure-storage-account", required=True)
-    parser.add_argument("--azure-storage-container", required=True)
+    parser.add_argument("--destination", choices=BACKUP_DESTINATIONS, default="azure-blob")
+    parser.add_argument("--azure-storage-account")
+    parser.add_argument("--azure-storage-container")
     args = parser.parse_args()
 
     if args.profile == "single-stack" and args.environment != "production":
@@ -77,9 +79,13 @@ def main() -> None:
         raise SystemExit("SMTP admin email is invalid")
     if not re.fullmatch(r"age1[0-9a-z]{40,}", args.backup_recipient):
         raise SystemExit("backup recipient must be an age public recipient")
-    if not re.fullmatch(r"[a-z0-9]{3,24}", args.azure_storage_account):
+    if args.destination == "azure-blob" and (args.azure_storage_account is None or args.azure_storage_container is None):
+        raise SystemExit("Azure storage account and container are required for azure-blob destination")
+    if (args.azure_storage_account is None) != (args.azure_storage_container is None):
+        raise SystemExit("Azure storage account and container must be provided together")
+    if args.azure_storage_account is not None and not re.fullmatch(r"[a-z0-9]{3,24}", args.azure_storage_account):
         raise SystemExit("Azure storage account name is invalid")
-    if not re.fullmatch(r"[a-z0-9-]{3,63}", args.azure_storage_container):
+    if args.azure_storage_container is not None and not re.fullmatch(r"[a-z0-9-]{3,63}", args.azure_storage_container):
         raise SystemExit("Azure storage container name is invalid")
     if args.output.exists():
         raise SystemExit("refusing to overwrite an existing environment file")
@@ -116,9 +122,11 @@ def main() -> None:
         "OPENAI_API_KEY": provider["OPENAI_API_KEY"],
         "BACKUP_DIR": f"/srv/aa/backups/{args.environment}",
         "BACKUP_AGE_RECIPIENT": args.backup_recipient,
-        "AZURE_STORAGE_ACCOUNT": args.azure_storage_account,
-        "AZURE_STORAGE_CONTAINER": args.azure_storage_container,
+        "BACKUP_DESTINATION": args.destination,
     }
+    if args.azure_storage_account is not None and args.azure_storage_container is not None:
+        values["AZURE_STORAGE_ACCOUNT"] = args.azure_storage_account
+        values["AZURE_STORAGE_CONTAINER"] = args.azure_storage_container
     args.output.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w") as stream:
