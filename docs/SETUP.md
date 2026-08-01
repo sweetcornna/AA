@@ -1,18 +1,10 @@
 # 本地运行与验证指南
 
-## 0. 现状速览（里程碑 1）
+## 0. 现状速览
 
-已完成并**已验证**（仅需 Node）：
-- monorepo 脚手架（npm workspaces）
-- `packages/shared` 分账/结算核心逻辑 + **24 个单测全过**
-- `apps/app` React 前端 **typecheck 通过 + vite build 通过**
-- Tauri v2 原生外壳脚手架 + 5 平台图标已生成
+仓库包含 React/Tauri 多平台客户端、migrations `0001`–`0012`、Auth/Realtime/RPC、三个 Edge Function、Android release signing gate，以及 Azure self-hosted Supabase 双栈基础设施。生产部署、永久签名候选和公开 GitHub Release 仍需按独立 runbook 的外部 gates 执行。
 
-待**首次运行环境**才能验证（需要安装/启动外部依赖）：
-- 数据库 migrations：需 `supabase start`（Docker）后 `supabase db reset` 实际应用
-- 多人实时同步、登录、记账全链路：需连上 Supabase
-- Tauri 原生构建：首次 `npm run tauri dev` 会编译 Rust 外壳（数分钟）
-- Playwright E2E：需前端 + Supabase 同时在跑
+本地开发继续使用 Supabase CLI/Docker；Azure staging/production 操作只按 [`HOSTED_DEPLOYMENT.md`](HOSTED_DEPLOYMENT.md)，不得把本节 local seed/reset 命令用于远端。
 
 ## 1. 安装依赖
 
@@ -72,8 +64,7 @@ npm run tauri android dev    # 模拟器/真机
 npm run tauri ios dev
 ```
 
-深链接（邀请/OTP 回跳）scheme 为 `aa://`（见 `src-tauri/tauri.conf.json`）；
-移动端的 universal/app links 关联域名在各平台工程里再配置。
+唯一产品 deep link 是 `aa://join?token=<24-character-base64url-token>`（见 `src-tauri/tauri.conf.json`）。Email OTP 由用户在 App 输入 6 位 code，不使用 Auth callback deep link；当前发布范围也不配置 Universal/App Links 或浏览器 fallback。
 
 ## 7. 跑单元测试
 
@@ -89,16 +80,18 @@ npm test --workspace=@aa/shared
 「助手」页问账本（`agent-query`）：花销/结余/谁付的自动回答；说"帮我和小明结一下账"时 agent 只**提议**一笔结算（金额来自服务端权威快照，模型不能编造），界面出确认卡片，点「确认结算」才由客户端在 RLS 约束下写入。
 
 - 本地 `supabase start` 自带 edge runtime，直接服务 `supabase/functions/*`；改代码后 `docker restart supabase_edge_runtime_AA` 生效。
-- **默认无需 API key**：未配置密钥时走规则 provider（金额/人名/分类/相对日期/结算建议），流程可直接跑通。
+- 本地未配置 LLM key 时走 rule provider（金额/人名/分类/相对日期/结算建议）。Android 云 ASR 的 staging/production release gate 仍要求服务器端 OpenAI key；目标校验、secret-safe 配置与 promotion 流程见 [`HOSTED_DEPLOYMENT.md`](HOSTED_DEPLOYMENT.md)。
 - **AI 层厂商无关、可插拔**（`supabase/functions/_shared/llm/`）：`registry.ts` 按
   「`ai_settings` 圈子行 > `ai_settings` 全局行 > `LLM_PROVIDER` 环境变量 > 默认 claude」
   解析 provider；任一层 `ai_enabled=false` 是总开关（强制规则 provider，不出外网）。
   已内置 `claude`（默认，strict tool use）/ `openai`（chat completions + json_schema）/
   `rule`（零依赖兜底）；**加一家 AI = 一个实现类 + registry 注册一行**。
   ```bash
-  supabase secrets set ANTHROPIC_API_KEY=sk-ant-...      # 或本地：
-  echo 'ANTHROPIC_API_KEY=sk-ant-...' >> supabase/functions/.env
-  # 切换厂商：LLM_PROVIDER=openai + OPENAI_API_KEY=...，或往 ai_settings 表插一行
+  # Hosted secret 禁止写进 argv/history；使用 HOSTED_DEPLOYMENT.md 的
+  # root-only env generator/validator。本地开发可在 ignored 文件中配置：
+  printf 'ANTHROPIC_API_KEY=<local-dev-only>\n' >> supabase/functions/.env
+  # 切换厂商：在 ignored 本地 env 中配置 LLM_PROVIDER/openai key，
+  # hosted 则使用受保护环境；也可通过 ai_settings 选择 provider。
   ```
 - 端到端验证：`node scripts/verify-ai.mjs`（解析 → 助手问答 → 结算提议/确认 → 总开关，13 项断言）；
   UI 冒烟另有 `python3 scripts/e2e-ai-parse.py`。
@@ -107,8 +100,7 @@ npm test --workspace=@aa/shared
 
 - 金额一律用**整数最小币种单位（分）**，分账用最大余数法保证求和守恒。
 - 加入圈子 / 建圈 / 记账走 **SECURITY DEFINER RPC**（`accept_invitation` /
-  `create_circle` / `create_expense`），在数据库内校验，省去了单独的 Edge Function
-  与 service-role key（比原计划更简单、同样安全）。
+  `create_circle` / `create_expense`），数据库内校验；客户端不需要也不得获得 service-role key。
 - 余额来自 `circle_balances` 视图（`security_invoker`，继承 RLS）。
 - AI / 语音（里程碑 2）已落地：`expenses.source/raw_text/ai_*` 记录每笔账的 AI 来源与
   置信度；`ai_settings` 表在运行时切换厂商/关停 AI，无需重新部署。

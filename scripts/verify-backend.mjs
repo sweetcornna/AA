@@ -1,186 +1,315 @@
-// Live end-to-end backend check against the local Supabase stack.
-// Verifies: profile auto-provisioning, create_circle / create_invitation /
-// accept_invitation / create_expense RPCs, the circle_balances view, the
-// split-sum guard, and RLS isolation for a non-member.
+// Destructive end-to-end authorization check for the Supabase backend.
+// Local mode uses the standard development keys. Hosted mode is staging-only,
+// requires runtime credentials, and must be explicitly enabled.
 //
-// Run: node scripts/verify-backend.mjs   (requires `supabase start`)
+// Local:  node scripts/verify-backend.mjs
+// Staging: copy supabase/hosted-targets.example.json to the ignored
+//          supabase/hosted-targets.json, verify the two approved targets, then run:
+//          AA_BACKEND_TEST_MODE=staging \
+//          AA_SUPABASE_URL=https://staging-api.cornna.xyz \
+//          AA_SUPABASE_PUBLIC_KEY=<public-key> \
+//          AA_SUPABASE_SERVICE_ROLE_KEY=<runtime-secret> \
+//          node scripts/verify-backend.mjs
 import { createClient } from "@supabase/supabase-js";
+import { readApprovedTargets } from "./hosted-deployment.mjs";
 
-const URL = process.env.VITE_SUPABASE_URL ?? "http://127.0.0.1:54321";
-const ANON =
+const LOCAL_URL = "http://127.0.0.1:54321";
+const LOCAL_ANON =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
-const SERVICE =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
+const LOCAL_SERVICE =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB" +
+  "hYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
 
-const admin = createClient(URL, SERVICE, { auth: { persistSession: false } });
+const SUPABASE_URL = process.env.AA_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? LOCAL_URL;
+const MODE = process.env.AA_BACKEND_TEST_MODE ?? (SUPABASE_URL === LOCAL_URL ? "local" : "");
+const ANON = process.env.AA_SUPABASE_PUBLIC_KEY ?? process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? process.env.VITE_SUPABASE_ANON_KEY ?? (MODE === "local" ? LOCAL_ANON : "");
+const SERVICE = process.env.AA_SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? (MODE === "local" ? LOCAL_SERVICE : "");
 
+function assertSafeTarget() {
+  const parsed = new URL(SUPABASE_URL);
+  if (MODE === "local") {
+    if (parsed.origin !== LOCAL_URL) throw new Error("local mode only permits the standard loopback Supabase URL");
+    return;
+  }
+  if (MODE !== "staging") throw new Error("remote destructive tests require AA_BACKEND_TEST_MODE=staging");
+  const { staging, production } = readApprovedTargets();
+  if (parsed.href !== `${staging.apiOrigin}/`) throw new Error("Supabase URL does not match the approved staging API origin");
+  if (parsed.href === `${production.apiOrigin}/`) throw new Error("destructive tests must never target production");
+  if (!ANON || !SERVICE) throw new Error("staging tests require public and service-role keys from the runtime environment");
+}
+
+assertSafeTarget();
+
+const admin = createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false, autoRefreshToken: false } });
+const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+const createdUsers = [];
+const createdCircles = [];
 let failures = 0;
-function check(label, cond, extra = "") {
-  const ok = !!cond;
+
+function check(label, condition, extra = "") {
+  const ok = Boolean(condition);
   if (!ok) failures++;
   console.log(`${ok ? "✓" : "✗"} ${label}${extra ? ` — ${extra}` : ""}`);
 }
-function rid() {
-  return Math.random().toString(36).slice(2, 10);
+
+function errorText(result) {
+  return result.error?.message ?? "no error";
 }
 
 async function makeUser(tag) {
-  const email = `${tag}-${rid()}@test.local`;
-  const password = "Password123!";
+  const email = `aa-${runId}-${tag}@example.invalid`;
+  const password = `Aa-${runId}-Password!`;
   const { data, error } = await admin.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
+    user_metadata: { display_name: `verify-${tag}` },
   });
-  if (error) throw new Error(`createUser ${tag}: ${error.message}`);
-  const client = createClient(URL, ANON, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  if (error || !data.user) throw new Error(`createUser ${tag}: ${error?.message ?? "missing user"}`);
+  createdUsers.push(data.user.id);
+
+  const client = createClient(SUPABASE_URL, ANON, { auth: { persistSession: false, autoRefreshToken: false } });
   const signIn = await client.auth.signInWithPassword({ email, password });
   if (signIn.error) throw new Error(`signIn ${tag}: ${signIn.error.message}`);
-  return { id: data.user.id, email, client };
+  return { id: data.user.id, client };
+}
+
+async function expectRejected(label, promise) {
+  const result = await promise;
+  check(label, Boolean(result.error), errorText(result));
+  return result;
+}
+
+function expenseArgs(circleId, payerId, splits, overrides = {}) {
+  return {
+    p_circle_id: circleId,
+    p_payer_id: payerId,
+    p_amount_minor: 10000,
+    p_currency: "CNY",
+    p_description: "verify expense",
+    p_category: "测试",
+    p_spent_at: "2026-07-29",
+    p_split_type: "equal",
+    p_splits: splits,
+    p_source: "manual",
+    p_raw_text: null,
+    p_ai_provider: null,
+    p_asr_provider: null,
+    p_ai_confidence: null,
+    p_ai_raw: null,
+    ...overrides,
+  };
+}
+
+async function cleanup() {
+  for (const circleId of [...createdCircles].reverse()) {
+    const result = await admin.from("circles").delete().eq("id", circleId);
+    check(`cleanup deletes circle ${circleId}`, !result.error, result.error?.message);
+  }
+  for (const userId of [...createdUsers].reverse()) {
+    const result = await admin.auth.admin.deleteUser(userId);
+    check(`cleanup deletes auth user ${userId}`, !result.error, result.error?.message);
+  }
+
+  if (createdCircles.length) {
+    const rows = await admin.from("circles").select("id").in("id", createdCircles);
+    check("cleanup leaves no test circles", !rows.error && (rows.data ?? []).length === 0, rows.error?.message);
+  }
+  if (createdUsers.length) {
+    const rows = await admin.from("profiles").select("id").in("id", createdUsers);
+    check("cleanup leaves no test profiles", !rows.error && (rows.data ?? []).length === 0, rows.error?.message);
+    for (const userId of createdUsers) {
+      const authUser = await admin.auth.admin.getUserById(userId);
+      check(
+        `cleanup leaves no auth user ${userId}`,
+        Boolean(authUser.error) || !authUser.data?.user,
+        authUser.error?.message,
+      );
+    }
+  }
 }
 
 async function main() {
-  const a = await makeUser("alice");
-  const b = await makeUser("bob");
-  const c = await makeUser("carol");
+  const owner = await makeUser("owner");
+  const debtor = await makeUser("debtor");
+  const outsider = await makeUser("outsider");
+  const contender = await makeUser("contender");
 
-  // profile auto-provisioned by trigger (check via admin to isolate from RLS)
-  const adminProf = await admin.from("profiles").select("id").eq("id", a.id).maybeSingle();
-  check("profile auto-created on signup (admin view)", adminProf.data?.id === a.id, adminProf.error?.message);
-  const prof = await a.client.from("profiles").select("id").eq("id", a.id).maybeSingle();
-  check("A can read own profile (RLS)", prof.data?.id === a.id, prof.error?.message ?? `data=${JSON.stringify(prof.data)}`);
+  const profile = await owner.client.from("profiles").select("id").eq("id", owner.id).maybeSingle();
+  check("profile auto-created", profile.data?.id === owner.id, profile.error?.message);
 
-  // A creates a circle
-  const circleRes = await a.client.rpc("create_circle", {
-    p_name: "测试圈",
-    p_description: "verify",
+  const circle = await owner.client.rpc("create_circle", {
+    p_name: `verify-${runId}`,
+    p_description: "authorization suite",
     p_currency: "CNY",
   });
-  check("create_circle RPC", !circleRes.error && circleRes.data?.id, circleRes.error?.message);
-  const circleId = circleRes.data.id;
+  check("create_circle RPC", !circle.error && circle.data?.id, circle.error?.message);
+  if (!circle.data?.id) throw new Error("create_circle did not return an id");
+  const circleId = circle.data.id;
+  createdCircles.push(circleId);
 
-  // A is owner member
-  const mem = await a.client.from("circle_members").select("role").eq("circle_id", circleId);
-  check("creator is owner member", mem.data?.some((m) => m.role === "owner"), mem.error?.message ?? `rows=${mem.data?.length}`);
-
-  // A invites, B accepts
-  const inv = await a.client.rpc("create_invitation", { p_circle_id: circleId });
-  check("create_invitation RPC", !inv.error && inv.data?.token, inv.error?.message);
-  const join = await b.client.rpc("accept_invitation", { p_token: inv.data.token });
-  check("accept_invitation joins circle", !join.error && join.data === circleId, join.error?.message);
-
-  // B is now a member (RLS lets B read the circle)
-  const bCircle = await b.client.from("circles").select("id").eq("id", circleId).maybeSingle();
-  check("B can read circle after joining", bCircle.data?.id === circleId);
-
-  // A records a 100.00 expense split equally between A and B
-  const exp = await a.client.rpc("create_expense", {
+  const invite = await owner.client.rpc("create_invitation", {
     p_circle_id: circleId,
-    p_payer_id: a.id,
-    p_amount_minor: 10000,
-    p_currency: "CNY",
+    p_role: "member",
+    p_max_uses: 1,
+  });
+  check("create_invitation RPC", !invite.error && /^[A-Za-z0-9_-]{24}$/.test(invite.data?.token ?? ""), invite.error?.message);
+  if (!invite.data?.token) throw new Error("create_invitation did not return a token");
+
+  const join = await debtor.client.rpc("accept_invitation", { p_token: invite.data.token });
+  check("accept_invitation joins member", !join.error && join.data === circleId, join.error?.message);
+  const idempotent = await debtor.client.rpc("accept_invitation", { p_token: invite.data.token });
+  check("accept_invitation is idempotent without consuming another use", !idempotent.error && idempotent.data === circleId, idempotent.error?.message);
+  const exhausted = await contender.client.rpc("accept_invitation", { p_token: invite.data.token });
+  check("max-use invitation rejects a different first-time member", Boolean(exhausted.error), errorText(exhausted));
+  await expectRejected("malformed invitation token rejected before lookup", outsider.client.rpc("accept_invitation", { p_token: `${invite.data.token}!` }));
+
+  const splits = [
+    { user_id: owner.id, owed_minor: 5000 },
+    { user_id: debtor.id, owed_minor: 5000 },
+  ];
+  const expense = await owner.client.rpc("create_expense", expenseArgs(circleId, owner.id, splits, {
     p_description: "火锅",
-    p_category: "餐饮",
-    p_spent_at: "2026-06-22",
-    p_split_type: "equal",
-    p_splits: [
-      { user_id: a.id, owed_minor: 5000 },
-      { user_id: b.id, owed_minor: 5000 },
-    ],
-    p_source: "manual",
-    p_raw_text: null,
-  });
-  check("create_expense RPC", !exp.error && exp.data?.id, exp.error?.message);
-
-  // split-sum guard: wrong sum must be rejected
-  const bad = await a.client.rpc("create_expense", {
-    p_circle_id: circleId,
-    p_payer_id: a.id,
-    p_amount_minor: 10000,
-    p_currency: "CNY",
-    p_description: "bad",
-    p_category: null,
-    p_spent_at: "2026-06-22",
-    p_split_type: "equal",
-    p_splits: [
-      { user_id: a.id, owed_minor: 5000 },
-      { user_id: b.id, owed_minor: 4999 },
-    ],
-  });
-  check("create_expense rejects mismatched split sum", !!bad.error, bad.error?.message ?? "no error!");
-
-  // balances: A +5000, B -5000
-  const bal = await a.client.from("circle_balances").select("user_id, net_minor").eq("circle_id", circleId);
-  const byUser = Object.fromEntries((bal.data ?? []).map((r) => [r.user_id, r.net_minor]));
-  check("balance: payer A is +5000", byUser[a.id] === 5000, `got ${byUser[a.id]}`);
-  check("balance: B is -5000", byUser[b.id] === -5000, `got ${byUser[b.id]}`);
-  check("balances sum to zero", Object.values(byUser).reduce((s, v) => s + v, 0) === 0);
-
-  // AI audit fields persist through create_expense (milestone 2)
-  const aiExp = await b.client.rpc("create_expense", {
-    p_circle_id: circleId,
-    p_payer_id: b.id,
-    p_amount_minor: 3000,
-    p_currency: "CNY",
-    p_description: "打车",
-    p_category: "交通",
-    p_spent_at: "2026-06-23",
-    p_split_type: "equal",
-    p_splits: [
-      { user_id: a.id, owed_minor: 1500 },
-      { user_id: b.id, owed_minor: 1500 },
-    ],
     p_source: "voice",
-    p_raw_text: "昨天打车30块",
-    p_ai_provider: "claude",
-    p_asr_provider: "web-speech",
-    p_ai_confidence: 0.92,
-    p_ai_raw: { amount: 30, splitType: "equal" },
+    p_raw_text: "昨天吃火锅100",
+    p_ai_provider: "rule",
+    p_asr_provider: "cloud:test",
+    p_ai_confidence: 0.9,
+    p_ai_raw: { amount: 100 },
+  }));
+  check("create_expense accepts valid AI audit payload", !expense.error && expense.data?.id, expense.error?.message);
+
+  await expectRejected("anonymous cannot call create_circle", createClient(SUPABASE_URL, ANON, { auth: { persistSession: false } }).rpc("create_circle", { p_name: "forged" }));
+  await expectRejected("member cannot insert expense directly", debtor.client.from("expenses").insert({
+    circle_id: circleId,
+    payer_id: debtor.id,
+    amount_minor: 1,
+    currency: "CNY",
+    split_type: "equal",
+    created_by: debtor.id,
+  }));
+  await expectRejected("member cannot update an expense directly", owner.client.from("expenses").update({ amount_minor: 1 }).eq("id", expense.data?.id));
+  await expectRejected("member cannot delete a split directly", owner.client.from("expense_splits").delete().eq("expense_id", expense.data?.id));
+  await expectRejected("member cannot insert settlement directly", debtor.client.from("settlements").insert({
+    circle_id: circleId,
+    from_user: debtor.id,
+    to_user: owner.id,
+    amount_minor: 1,
+    currency: "CNY",
+    created_by: debtor.id,
+  }));
+  await expectRejected("owner cannot mutate membership directly", owner.client.from("circle_members").update({ role: "owner" }).eq("circle_id", circleId).eq("user_id", debtor.id));
+  await expectRejected("owner cannot mutate invitation directly", owner.client.from("invitations").update({ used_count: 0 }).eq("id", invite.data.id));
+  await expectRejected("member cannot insert a circle directly", debtor.client.from("circles").insert({ name: "forged", default_currency: "CNY", created_by: debtor.id }));
+
+  await expectRejected("expense rejects mismatched split sum", owner.client.rpc("create_expense", expenseArgs(circleId, owner.id, [
+    { user_id: owner.id, owed_minor: 5000 },
+    { user_id: debtor.id, owed_minor: 4999 },
+  ])));
+  await expectRejected("expense rejects duplicate participants", owner.client.rpc("create_expense", expenseArgs(circleId, owner.id, [
+    { user_id: owner.id, owed_minor: 5000 },
+    { user_id: owner.id, owed_minor: 5000 },
+  ])));
+  await expectRejected("expense rejects nonmember participant", owner.client.rpc("create_expense", expenseArgs(circleId, owner.id, [
+    { user_id: owner.id, owed_minor: 5000 },
+    { user_id: outsider.id, owed_minor: 5000 },
+  ])));
+  await expectRejected("expense rejects negative owed amount", owner.client.rpc("create_expense", expenseArgs(circleId, owner.id, [
+    { user_id: owner.id, owed_minor: -1 },
+    { user_id: debtor.id, owed_minor: 10001 },
+  ])));
+  await expectRejected("expense rejects unknown split fields", owner.client.rpc("create_expense", expenseArgs(circleId, owner.id, [
+    { user_id: owner.id, owed_minor: 5000, circle_id: circleId },
+    { user_id: debtor.id, owed_minor: 5000 },
+  ])));
+  await expectRejected("expense rejects oversized description", owner.client.rpc("create_expense", expenseArgs(circleId, owner.id, splits, { p_description: "x".repeat(501) })));
+  await expectRejected("nonmember cannot create expense", outsider.client.rpc("create_expense", expenseArgs(circleId, owner.id, splits)));
+
+  await expectRejected("creditor cannot confirm debtor's payment", owner.client.rpc("create_settlement", {
+    p_circle_id: circleId,
+    p_from_user: debtor.id,
+    p_to_user: owner.id,
+    p_amount_minor: 5000,
+    p_currency: "CNY",
+  }));
+  await expectRejected("debtor cannot settle to a nonmember", debtor.client.rpc("create_settlement", {
+    p_circle_id: circleId,
+    p_from_user: debtor.id,
+    p_to_user: outsider.id,
+    p_amount_minor: 5000,
+    p_currency: "CNY",
+  }));
+  await expectRejected("settlement rejects nonpositive amount", debtor.client.rpc("create_settlement", {
+    p_circle_id: circleId,
+    p_from_user: debtor.id,
+    p_to_user: owner.id,
+    p_amount_minor: 0,
+    p_currency: "CNY",
+  }));
+
+  const settlement = await debtor.client.rpc("create_settlement", {
+    p_circle_id: circleId,
+    p_from_user: debtor.id,
+    p_to_user: owner.id,
+    p_amount_minor: 5000,
+    p_currency: "CNY",
+    p_note: "verified payment",
   });
-  check("create_expense accepts AI audit params", !aiExp.error && aiExp.data?.id, aiExp.error?.message);
-  const aiRow = await admin
-    .from("expenses")
-    .select("source, raw_text, ai_provider, asr_provider, ai_confidence, ai_raw")
-    .eq("id", aiExp.data?.id)
-    .maybeSingle();
-  check(
-    "AI audit fields persisted",
-    aiRow.data?.source === "voice" &&
-      aiRow.data?.ai_provider === "claude" &&
-      aiRow.data?.asr_provider === "web-speech" &&
-      Number(aiRow.data?.ai_confidence) === 0.92 &&
-      aiRow.data?.ai_raw?.amount === 30,
-    aiRow.error?.message ?? JSON.stringify(aiRow.data),
+  check("debtor creates a valid settlement through RPC", !settlement.error && settlement.data?.created_by === debtor.id, settlement.error?.message);
+
+  const balances = await owner.client.from("circle_balances").select("user_id, net_minor").eq("circle_id", circleId);
+  const byUser = Object.fromEntries((balances.data ?? []).map((row) => [row.user_id, Number(row.net_minor)]));
+  check("settlement returns both balances to zero", byUser[owner.id] === 0 && byUser[debtor.id] === 0, JSON.stringify(byUser));
+  check("balances remain zero-sum", Object.values(byUser).reduce((sum, value) => sum + value, 0) === 0, JSON.stringify(byUser));
+
+  const outsiderExpenses = await outsider.client.from("expenses").select("id").eq("circle_id", circleId);
+  check("nonmember reads no circle expenses", !outsiderExpenses.error && (outsiderExpenses.data ?? []).length === 0, outsiderExpenses.error?.message);
+  const memberExpenses = await debtor.client.from("expenses").select("id").eq("circle_id", circleId);
+  check("member still reads RPC-created expenses", !memberExpenses.error && (memberExpenses.data ?? []).length === 1, memberExpenses.error?.message);
+
+  const usageInsert = await debtor.client.from("asr_usage").insert({ user_id: debtor.id });
+  check("client cannot write ASR usage directly", Boolean(usageInsert.error), errorText(usageInsert));
+  const usageRead = await debtor.client.from("asr_usage").select("id");
+  check("client cannot read ASR usage", Boolean(usageRead.error), errorText(usageRead));
+  let quotaAccepted = 0;
+  for (let i = 0; i < 11; i++) {
+    const quota = await debtor.client.rpc("consume_asr_quota");
+    const row = Array.isArray(quota.data) ? quota.data[0] : quota.data;
+    if (!quota.error && row?.allowed) quotaAccepted++;
+    if (i === 10) {
+      check(
+        "ASR quota rejects the 11th request in ten minutes",
+        !quota.error && row?.allowed === false && Number(row.retry_after_seconds) > 0,
+        quota.error?.message,
+      );
+    }
+  }
+  check("ASR quota atomically accepts exactly ten requests", quotaAccepted === 10, String(quotaAccepted));
+
+  const concurrentQuota = await Promise.all(
+    Array.from({ length: 11 }, () => contender.client.rpc("consume_asr_quota")),
   );
-
-  // ai_settings: operator-managed global row is readable by any signed-in user
-  const glob = await admin.from("ai_settings").insert({ circle_id: null, llm_provider: "claude" }).select().single();
-  check("service role can insert global ai_settings", !glob.error, glob.error?.message);
-  const globRead = await c.client.from("ai_settings").select("llm_provider").is("circle_id", null).maybeSingle();
-  check("any signed-in user reads global ai_settings", globRead.data?.llm_provider === "claude", globRead.error?.message);
-
-  // ai_settings: circle owner manages the circle override; plain member cannot
-  const ownSet = await a.client.from("ai_settings").insert({ circle_id: circleId, llm_provider: "rule", ai_enabled: false }).select().single();
-  check("circle owner inserts circle ai_settings", !ownSet.error, ownSet.error?.message);
-  const memSet = await b.client.from("ai_settings").update({ llm_provider: "openai" }).eq("circle_id", circleId).select();
-  check("plain member cannot update circle ai_settings", (memSet.data ?? []).length === 0, `updated ${memSet.data?.length} row(s)`);
-  const cSet = await c.client.from("ai_settings").select("llm_provider").eq("circle_id", circleId);
-  check("RLS: non-member C cannot read circle ai_settings", (cSet.data ?? []).length === 0, `saw ${cSet.data?.length}`);
-  await admin.from("ai_settings").delete().is("circle_id", null); // keep DB clean for reruns
-
-  // RLS: non-member C sees nothing
-  const cExp = await c.client.from("expenses").select("id").eq("circle_id", circleId);
-  check("RLS: non-member C sees 0 expenses", (cExp.data ?? []).length === 0, `saw ${cExp.data?.length}`);
-  const cCircle = await c.client.from("circles").select("id").eq("id", circleId);
-  check("RLS: non-member C cannot read the circle", (cCircle.data ?? []).length === 0);
-
-  console.log(`\n${failures === 0 ? "ALL PASSED ✓" : `${failures} CHECK(S) FAILED ✗`}`);
-  process.exit(failures === 0 ? 0 : 1);
+  const concurrentRows = concurrentQuota.map((quota) => ({
+    error: quota.error,
+    row: Array.isArray(quota.data) ? quota.data[0] : quota.data,
+  }));
+  const concurrentAccepted = concurrentRows.filter(({ error, row }) => !error && row?.allowed === true).length;
+  const concurrentRejected = concurrentRows.filter(({ error, row }) => !error && row?.allowed === false).length;
+  check(
+    "ASR quota serializes eleven concurrent requests",
+    concurrentAccepted === 10 && concurrentRejected === 1,
+    `${concurrentAccepted} accepted, ${concurrentRejected} rejected`,
+  );
 }
 
-main().catch((e) => {
-  console.error("FATAL", e);
-  process.exit(1);
-});
+try {
+  await main();
+} catch (error) {
+  failures++;
+  console.error("FATAL", error instanceof Error ? error.message : error);
+} finally {
+  await cleanup();
+}
+
+console.log(`\n${failures === 0 ? "ALL PASSED ✓" : `${failures} CHECK(S) FAILED ✗`}`);
+process.exit(failures === 0 ? 0 : 1);

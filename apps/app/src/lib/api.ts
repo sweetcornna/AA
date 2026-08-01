@@ -1,5 +1,6 @@
 import { computeSplit } from "@aa/shared";
 import type { ExpenseDraft, ParsedExpense } from "@aa/shared";
+import { transcribeAudioWithClient } from "./asrClient";
 import { supabase } from "./supabase";
 import type {
   Circle,
@@ -156,27 +157,16 @@ export async function createExpense(
 }
 
 /** Transcribe recorded audio via the asr-transcribe Edge Function (cloud ASR). */
-export async function transcribeAudio(blob: Blob): Promise<{ text: string; provider: string }> {
-  const buf = await blob.arrayBuffer();
-  // base64-encode in chunks to avoid call-stack limits on large buffers.
-  const bytes = new Uint8Array(buf);
-  let bin = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  const audioBase64 = btoa(bin);
-  const { data, error } = await supabase.functions.invoke("asr-transcribe", {
-    body: { audioBase64, mimeType: blob.type || "audio/webm" },
-  });
-  if (error) throw new Error(error.message ?? "语音转写失败");
-  if (data?.error) throw new Error(data.error);
-  return { text: (data?.text as string) ?? "", provider: `cloud:${data?._provider ?? "unknown"}` };
+export async function transcribeAudio(
+  blob: Blob,
+  signal?: AbortSignal,
+): Promise<{ text: string; provider: string }> {
+  return transcribeAudioWithClient(supabase, blob, signal);
 }
 
 /**
  * A settlement the agent proposes but does NOT execute. The user confirms in
- * the UI and the client performs the insert itself (under RLS).
+ * the UI and the client calls the debtor-authorized settlement RPC.
  */
 export interface AgentSettleAction {
   type: "settle_up";
@@ -345,16 +335,13 @@ export async function createSettlement(input: {
   currency: string;
   note?: string;
 }): Promise<void> {
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) throw new Error("not authenticated");
-  const res = await supabase.from("settlements").insert({
-    circle_id: input.circleId,
-    from_user: input.fromUser,
-    to_user: input.toUser,
-    amount_minor: input.amountMinor,
-    currency: input.currency,
-    note: input.note ?? null,
-    created_by: auth.user.id,
+  const res = await supabase.rpc("create_settlement", {
+    p_circle_id: input.circleId,
+    p_from_user: input.fromUser,
+    p_to_user: input.toUser,
+    p_amount_minor: input.amountMinor,
+    p_currency: input.currency,
+    p_note: input.note ?? null,
   });
   if (res.error) throw new Error(res.error.message);
 }

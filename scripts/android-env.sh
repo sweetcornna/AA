@@ -1,22 +1,54 @@
+#!/usr/bin/env bash
 # Source this before any Android/Tauri-Android command.
-# Toolchain installed via Homebrew (no sudo): OpenJDK 17 + android-commandlinetools.
-# Force the stable Rust toolchain (>= 1.85, has edition2024). The Gradle rust
-# task invokes cargo from a cwd where src-tauri/rust-toolchain.toml is NOT an
-# ancestor, so without this it falls back to the global default (1.82) and fails
-# with "feature edition2024 not stabilized". RUSTUP_TOOLCHAIN wins everywhere.
-export RUSTUP_TOOLCHAIN="stable"
-export JAVA_HOME="/opt/homebrew/opt/openjdk@17"
-export ANDROID_HOME="/opt/homebrew/share/android-commandlinetools"
-export ANDROID_SDK_ROOT="$ANDROID_HOME"
-# NDK_HOME: prefer a pinned stable NDK (r27) over any beta that may also be present.
-# Falls back to the newest installed NDK if the pinned one is absent.
-# Uses `find` (not shell globs) so it is safe under zsh nullglob.
-if [ -d "$ANDROID_HOME/ndk" ]; then
-  _pin="$(find "$ANDROID_HOME/ndk" -maxdepth 1 -type d -name '27.*' 2>/dev/null | sort -V | tail -1)"
-  if [ -z "$_pin" ]; then
-    _pin="$(find "$ANDROID_HOME/ndk" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort -V | tail -1)"
+
+export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
+
+if [[ -z "${JAVA_HOME:-}" ]]; then
+  if command -v /usr/libexec/java_home >/dev/null 2>&1; then
+    JAVA_HOME="$(/usr/libexec/java_home -v 17 2>/dev/null || true)"
   fi
-  [ -n "$_pin" ] && export NDK_HOME="$_pin"
-  unset _pin
+  if [[ -z "${JAVA_HOME:-}" && -d /opt/homebrew/opt/openjdk@17 ]]; then
+    JAVA_HOME="/opt/homebrew/opt/openjdk@17"
+  fi
+  export JAVA_HOME
 fi
-export PATH="$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+
+if [[ -z "${ANDROID_HOME:-}" ]]; then
+  for candidate in \
+    "${ANDROID_SDK_ROOT:-}" \
+    "/opt/homebrew/share/android-commandlinetools" \
+    "$HOME/Library/Android/sdk"; do
+    if [[ -n "$candidate" && -d "$candidate/platform-tools" && -d "$candidate/build-tools" ]]; then
+      export ANDROID_HOME="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${ANDROID_HOME:-}" || ! -d "$ANDROID_HOME" ]]; then
+  echo "Android SDK not found. Set ANDROID_HOME to an installed SDK." >&2
+  return 1
+fi
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+if [[ -z "${JAVA_HOME:-}" || ! -x "$JAVA_HOME/bin/java" ]]; then
+  echo "JDK 17 not found. Set JAVA_HOME to an installed JDK 17." >&2
+  return 1
+fi
+
+pinned_ndk="$ANDROID_HOME/ndk/27.3.13750724"
+if [[ -d "$pinned_ndk" ]]; then
+  export NDK_HOME="$pinned_ndk"
+elif [[ -z "${NDK_HOME:-}" ]]; then
+  echo "Pinned Android NDK 27.3.13750724 is not installed under $ANDROID_HOME/ndk." >&2
+  return 1
+fi
+unset pinned_ndk
+
+path_entries=("$JAVA_HOME/bin" "$ANDROID_HOME/cmdline-tools/latest/bin" "$ANDROID_HOME/platform-tools")
+for path_entry in "${path_entries[@]}"; do
+  if [[ -d "$path_entry" && ":$PATH:" != *":$path_entry:"* ]]; then
+    PATH="$path_entry:$PATH"
+  fi
+done
+unset path_entry path_entries
+export PATH

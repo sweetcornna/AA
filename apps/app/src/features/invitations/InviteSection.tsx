@@ -3,10 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useState } from "react";
 import { Card } from "../../components/ui";
 import { createInvitation } from "../../lib/api";
-
-function inviteBase(): string {
-  return import.meta.env.VITE_APP_BASE_URL || window.location.origin;
-}
+import { inviteLink } from "../../lib/inviteLink";
 
 export function InviteSection({ circleId }: { circleId: string }) {
   const [link, setLink] = useState<string | null>(null);
@@ -14,7 +11,7 @@ export function InviteSection({ circleId }: { circleId: string }) {
 
   const gen = useMutation({
     mutationFn: () => createInvitation({ circleId }),
-    onSuccess: (inv) => setLink(`${inviteBase()}/#/join?token=${inv.token}`),
+    onSuccess: (inv) => setLink(inviteLink(inv.token)),
   });
 
   async function copy() {

@@ -1,0 +1,171 @@
+_format_version: "2.1"
+_transform: true
+
+consumers:
+  - username: anon
+    keyauth_credentials:
+      - key: $SUPABASE_ANON_KEY
+  - username: service_role
+    keyauth_credentials:
+      - key: $SUPABASE_SERVICE_KEY
+
+acls:
+  - consumer: anon
+    group: anon
+  - consumer: service_role
+    group: admin
+
+services:
+  - name: auth-verify
+    url: http://auth:9999/verify
+    routes:
+      - name: auth-verify
+        strip_path: true
+        paths: [/auth/v1/verify]
+    plugins:
+      - name: cors
+        config: &cors
+          origins:
+            - http://tauri.localhost
+            - https://tauri.localhost
+            - tauri://localhost
+          methods: [GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS]
+          headers: [Accept, Accept-Profile, Authorization, apikey, Content-Profile, Content-Type, Prefer, Range, X-Client-Info, X-Supabase-Api-Version, X-Upsert]
+          exposed_headers: [Content-Range, X-Supabase-Api-Version]
+          credentials: false
+          max_age: 3600
+
+  - name: auth-jwks
+    url: http://auth:9999/.well-known/jwks.json
+    routes:
+      - name: auth-jwks
+        strip_path: true
+        paths: [/auth/v1/.well-known/jwks.json]
+    plugins:
+      - name: cors
+        config: *cors
+
+  - name: auth
+    url: http://auth:9999/
+    routes:
+      - name: auth
+        strip_path: true
+        paths: [/auth/v1/]
+    plugins:
+      - name: cors
+        config: *cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: $LUA_AUTH_EXPR"
+          replace:
+            headers:
+              - "Authorization: $LUA_AUTH_EXPR"
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow: [admin, anon]
+
+  - name: rest-openapi
+    url: http://rest:3000/
+    routes:
+      - name: rest-openapi
+        strip_path: true
+        expression: 'http.path == "/rest/v1/"'
+    plugins:
+      - name: cors
+        config: *cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: $LUA_AUTH_EXPR"
+          replace:
+            headers:
+              - "Authorization: $LUA_AUTH_EXPR"
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow: [admin]
+
+  - name: rest
+    url: http://rest:3000/
+    routes:
+      - name: rest
+        strip_path: true
+        paths: [/rest/v1/]
+    plugins:
+      - name: cors
+        config: *cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: $LUA_AUTH_EXPR"
+          replace:
+            headers:
+              - "Authorization: $LUA_AUTH_EXPR"
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow: [admin, anon]
+
+  - name: realtime-ws
+    url: http://realtime-dev.supabase-realtime:4000/socket
+    protocol: ws
+    routes:
+      - name: realtime-ws
+        strip_path: true
+        paths: [/realtime/v1/]
+    plugins:
+      - name: cors
+        config: *cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "x-api-key:$LUA_RT_WS_EXPR"
+          replace:
+            querystring:
+              - "apikey:$LUA_RT_WS_EXPR"
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow: [admin, anon]
+
+  - name: realtime-api-block
+    url: http://realtime-dev.supabase-realtime:4000/api
+    routes:
+      - name: realtime-api-block
+        strip_path: true
+        paths: [/realtime/v1/api]
+    plugins:
+      - name: request-termination
+        config:
+          status_code: 403
+          message: Access is forbidden.
+
+  - name: functions
+    url: http://functions:9000/
+    read_timeout: 55000
+    write_timeout: 55000
+    routes:
+      - name: functions
+        strip_path: true
+        paths: [/functions/v1/]
+    plugins:
+      - name: cors
+        config: *cors

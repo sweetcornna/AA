@@ -11,21 +11,81 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+# Production builds are fail-closed to the canonical self-hosted origin. This is
+# a synthetic public key used only for static build validation.
+env:
+  VITE_SUPABASE_URL: https://api.cornna.xyz
+  VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_build_validation
+
 jobs:
   quality:
     name: Lint · Test · Web build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - name: Typecheck
         run: npm run typecheck
-      - name: Unit + property tests (packages/shared)
+      - name: Unit + property tests
         run: npm test
+      - name: Deployment contract tests
+        run: npm run test:deployment
+      - name: Enforce repository no-secret/no-deploy policy
+        run: python3 infra/supabase-selfhost/tests/repository-policy.py
+      - name: Validate self-host infrastructure contracts
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/python-cache
+        run: |
+          python3 -m compileall -q infra/supabase-selfhost/scripts infra/supabase-selfhost/tests
+          bash -n infra/supabase-selfhost/scripts/*.sh
+          python3 infra/supabase-selfhost/tests/validate-infra.py
+          test -z "$(git status --porcelain)"
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.9.1
+      - name: Check Edge Functions with frozen dependencies
+        env:
+          ANTHROPIC_API_KEY: ""
+          ANTHROPIC_MODEL: ""
+          OPENAI_API_KEY: ""
+          OPENAI_BASE_URL: ""
+          OPENAI_MODEL: ""
+          LLM_PROVIDER: ""
+        run: |
+          deno check --config supabase/functions/deno.json --lock supabase/functions/deno.lock --frozen \
+            supabase/functions/parse-expense/index.ts \
+            supabase/functions/agent-query/index.ts \
+            supabase/functions/asr-transcribe/index.ts
+          deno test \
+            --allow-env=ANTHROPIC_API_KEY,ANTHROPIC_MODEL,OPENAI_API_KEY,OPENAI_BASE_URL,OPENAI_MODEL,LLM_PROVIDER \
+            --config supabase/functions/deno.json --lock supabase/functions/deno.lock --frozen \
+            supabase/functions/_shared/llm/registry_test.ts \
+            supabase/functions/asr-transcribe/handler_test.ts
+      - name: Build reproducible immutable Edge Function artifacts
+        run: |
+          runtime_a="$RUNNER_TEMP/aa-selfhost-runtime-a"
+          runtime_b="$RUNNER_TEMP/aa-selfhost-runtime-b"
+          for runtime_root in "$runtime_a" "$runtime_b"; do
+            infra/supabase-selfhost/scripts/prepare-upstream.sh "$runtime_root"
+            infra/supabase-selfhost/scripts/build-functions.sh "$runtime_root"
+            test -f "$runtime_root"/functions/*/fingerprint.json
+            test -f "$runtime_root"/functions/*/artifact-manifest.json
+            test -f "$runtime_root"/functions/*/main/index.ts
+            test -f "$runtime_root"/functions/*/agent-query/index.ts
+            test -f "$runtime_root"/functions/*/asr-transcribe/index.ts
+            test -f "$runtime_root"/functions/*/parse-expense/index.ts
+          done
+          python3 infra/supabase-selfhost/scripts/verify-artifact.py \
+            "$runtime_a"/functions/* "$runtime_b"/functions/*
+          cmp "$runtime_a"/templates/*/confirmation.html \
+            "$runtime_b"/templates/*/confirmation.html
       - name: Web build
         run: npm run build --workspace=@aa/app
 
@@ -38,14 +98,14 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       - name: Cache cargo / target
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: apps/app/src-tauri
       - name: Linux system deps (Tauri v2 / WebKitGTK)
@@ -57,7 +117,7 @@ jobs:
       - name: Build Tauri desktop bundle
         run: npm run tauri --workspace=@aa/app -- build
       - name: Upload bundles
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: aa-desktop-${{ matrix.os }}
           path: |

@@ -3,13 +3,13 @@ import { normalizeParsed, PARSE_TOOL_SCHEMA, parseSystemPrompt } from "./parse.t
 import type { AgentReply, LLMProvider, ParseCtx, Snapshot } from "./types.ts";
 import { actionFromProposal } from "./settle.ts";
 
-const MODEL = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-opus-4-8";
+const MODEL = () => Deno.env.get("ANTHROPIC_MODEL") ?? "claude-opus-4-8";
 
 // deno-lint-ignore no-explicit-any
 async function client(): Promise<any> {
   // Dynamic import: only loaded when this provider is actually selected, so
   // other paths (rule fallback) have no dependency on the SDK module.
-  const { default: Anthropic } = await import("npm:@anthropic-ai/sdk");
+  const { default: Anthropic } = await import("npm:@anthropic-ai/sdk@0.110.0");
   return new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
 }
 
@@ -21,7 +21,7 @@ export const claudeProvider: LLMProvider = {
   async parseExpense(text: string, ctx: ParseCtx) {
     const anthropic = await client();
     const resp = await anthropic.messages.create({
-      model: MODEL,
+      model: MODEL(),
       max_tokens: 1024,
       system: parseSystemPrompt(ctx),
       tools: [
@@ -57,7 +57,7 @@ export const claudeProvider: LLMProvider = {
       JSON.stringify(snap),
     ].join("\n");
     const resp = await anthropic.messages.create({
-      model: MODEL,
+      model: MODEL(),
       max_tokens: 700,
       system,
       tools: [

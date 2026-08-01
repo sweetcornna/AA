@@ -1,5 +1,17 @@
 buildscript {
     repositories {
+        System.getenv("AA_ANDROID_GOOGLE_MAVEN_MIRROR")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { mirror ->
+                maven {
+                    url = uri(mirror)
+                    content {
+                        includeGroupByRegex("com\\.android(\\..*)?")
+                        includeGroupByRegex("com\\.google(\\..*)?")
+                        includeGroupByRegex("androidx(\\..*)?")
+                    }
+                }
+            }
         google()
         mavenCentral()
     }
@@ -11,6 +23,18 @@ buildscript {
 
 allprojects {
     repositories {
+        System.getenv("AA_ANDROID_GOOGLE_MAVEN_MIRROR")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { mirror ->
+                maven {
+                    url = uri(mirror)
+                    content {
+                        includeGroupByRegex("com\\.android(\\..*)?")
+                        includeGroupByRegex("com\\.google(\\..*)?")
+                        includeGroupByRegex("androidx(\\..*)?")
+                    }
+                }
+            }
         google()
         mavenCentral()
     }

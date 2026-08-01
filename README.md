@@ -46,7 +46,7 @@
 | **记一笔(含 AI 一句话)** | **动态** | **AI 助手** |
 | ![记一笔](docs/screenshots/add-expense.png) | ![动态](docs/screenshots/activity.png) | ![助手](docs/screenshots/assistant.png) |
 
-| Android(真机) | iOS(模拟器) |
+| Android 截图 | iOS 模拟器 |
 |:---:|:---:|
 | ![Android](docs/screenshots/android.png) | ![iOS](docs/screenshots/ios.png) |
 
@@ -60,8 +60,8 @@
 - **实时同步** —— A 记一笔,B 在 1–2 秒内自动看到。
 - **AI 一句话记账** —— 一句话(或语音)自动解析金额 / 付款人 / 分摊,填好表单等你确认;每笔记录 AI 来源与置信度可审计。
 - **AI 助手** —— 问账本(花销 / 结余 / 谁付的);让它帮你结账时先出确认卡片,点确认才落账。
-- **AI 厂商无关、可插拔** —— Claude(默认)/ OpenAI / 规则兜底,`ai_settings` 表运行时切换或一键关停;没配 API key 全流程照样能用。
-- **多平台原生** —— Win / macOS / Linux / Android / iOS,全部已构建并在模拟器或真机验证。
+- **AI 厂商无关、可插拔** —— Claude / OpenAI / 规则兜底,`ai_settings` 表运行时切换或一键关停;没配 API key 时回退到规则 provider。
+- **多平台原生** —— Win / macOS / Linux / Android / iOS 共用 Tauri/React 代码；各平台实际发布与验收状态见下方表格。
 
 ---
 
@@ -131,7 +131,7 @@ npm run build --workspace=@aa/app          # 生产构建
              │ @supabase/supabase-js             │
              ▼                                    │
 ┌──────────────────────────── Supabase ──────────┴─────────────────────┐
-│ Postgres + RLS · Auth(邮箱/手机号 OTP+密码) · Realtime · Storage      │
+│ Postgres + RLS · Auth(邮箱密码/六位邮箱 OTP) · Realtime              │
 │ RPC: create_circle / create_expense / create_invitation / accept…     │
 │ View: circle_balances(净余额单一权威)                                 │
 │ Edge Functions(Deno): parse-expense · agent-query · asr-transcribe    │
@@ -148,7 +148,7 @@ npm run build --workspace=@aa/app          # 生产构建
 - 金额一律用 **整数最小币种单位(分)`bigint`**,绝不用浮点。
 - `expense_splits.owed_minor` 永远存「已算好的最终整数分」,净余额只需 `SUM`。
 - 分账在前端纯函数实时预览 → 写库前算好;净余额以 `circle_balances` 视图为权威。
-- 加入圈子只能走 `accept_invitation`(service role),杜绝任意人塞进任意圈子。
+- 加入圈子只能由已认证用户调用受控 `accept_invitation` SECURITY DEFINER RPC，客户端不持有 service-role key。
 - AI 是「加速器」不是「必经路」:ASR / LLM 任一失败都能回退到纯手动表单,记账永不中断。
 
 ### 技术栈
@@ -157,9 +157,9 @@ npm run build --workspace=@aa/app          # 生产构建
 |---|---|
 | 前端 | React 19 · TypeScript(strict)· Vite 6 · Tailwind · React Router v7 · TanStack Query v5 |
 | 跨平台外壳 | Tauri v2(Rust ≥ 1.85;deep-link / updater 插件) |
-| 后端 | Supabase:Postgres · Auth · RLS · Realtime · Storage · Edge Functions(Deno) |
+| 后端 | 自托管 Supabase:Postgres · Auth · RLS · Realtime · Edge Functions(Deno) |
 | 共享逻辑 | `packages/shared`:整数分 money / 最大余数法分账 / 贪心最少转账 · Vitest + fast-check |
-| AI | 厂商无关、可插拔;默认 Claude(Opus 4.8,strict tool use),无 key 时规则兜底 |
+| AI | 厂商无关、可插拔；托管栈配置 OpenAI `gpt-4o-mini`，无可用 key 时规则兜底 |
 
 ### 仓库结构
 
@@ -178,18 +178,18 @@ AA/
 
 ### 平台状态
 
-| 平台 | 构建 | 运行验证 | 登录 → 真实数据 |
+| 平台 | 当前公开包 | 仓库构建路径 | v0.0.3 验收状态 |
 |---|:---:|:---:|:---:|
-| macOS / Windows / Linux 桌面 | ✅ | ✅ | ✅ |
-| Android | ✅ | ✅ 模拟器 | ✅ 完整 E2E |
-| iOS | ✅ | ✅ 模拟器 | ✅ 完整 E2E |
-| Web | ✅ | ✅ | ✅ |
+| macOS / Windows / Linux 桌面 | v0.0.2 技术演示 | 已有 | 不在本次发布范围 |
+| Android | v0.0.2 debug 演示 APK | release arm64 APK | 正式候选尚未发布；真机验收已豁免且不得声称通过 |
+| iOS | 无公开包 | 已有 | 不在本次发布范围 |
+| Web | 无公开托管版 | 已有 | 不在本次发布范围 |
 
 ---
 
 ## 说明
 
 - 本地 Supabase 的 anon key 是标准本地开发密钥(公开、非生产),`.env` 已被 `.gitignore` 排除,仓库只含 `.env.example` 占位符。
-- Release 安装包由 GitHub Actions 在打 `v*` 标签时自动构建发布;当前构建未注入后端配置,故为技术演示版。
-- AI 解析默认走 Edge Function `parse-expense`:设置 `ANTHROPIC_API_KEY` 即启用真实 Claude,未设置时自动回退到规则解析。
+- 当前公开 v0.0.2 是未注入公开后端的技术演示包。v0.0.3 只允许通过手动 `candidate` → `publish` 两阶段 workflow 发布：候选构建一次，publish 原样上传同一 APK；tag 本身不会自动发布。
+- AI 解析走 Edge Function `parse-expense`；本地可配置受支持 provider，Azure 托管栈固定使用 server-side OpenAI 配置，未配置可用 key 时回退到规则解析。
 - 移动端构建踩过的坑(本机 JVM 的 AES-GCM intrinsic 导致 TLS 下载损坏、`npm run` 切 cwd 致 cargo 用错 toolchain 等)已固化进 `gradle.properties` / `rust-toolchain.toml` / `scripts/`。

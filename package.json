@@ -10,10 +10,13 @@
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
+    "test:deployment": "node --test scripts/hosted-deployment.test.mjs scripts/verify-production-canary.test.mjs",
+    "test:infrastructure": "python3 infra/supabase-selfhost/tests/validate-infra.py",
+    "test:repository-policy": "python3 infra/supabase-selfhost/tests/repository-policy.py --include-untracked",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

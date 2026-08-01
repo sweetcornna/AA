@@ -24,8 +24,8 @@ const ChatBubble = ({ kind }: { kind: "user" | "assistant" }) => (
 
 /**
  * The agent's write path: it only ever PROPOSES a settlement — nothing is
- * written until the user taps 确认. Confirming inserts the settlement from the
- * client (under RLS), exactly like doing it by hand on the balances page.
+ * written until the user taps 确认. Confirming calls the debtor-authorized
+ * settlement RPC, exactly like doing it by hand on the balances page.
  */
 function SettleCard({ action, state, onConfirm, onCancel, busy }: {
   action: AgentSettleAction;

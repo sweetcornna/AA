@@ -1,11 +1,14 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { Button, Card, Centered, Hairline, Input, Segmented, Spinner } from "../../components/ui";
+import { useEffect, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
+import { Button, Card, Hairline, Input, Spinner } from "../../components/ui";
+import { authErrorMessage } from "../../lib/authNavigation";
 import { supabase } from "../../lib/supabase";
 
-type Channel = "email" | "phone";
 type Method = "password" | "otp";
 type OtpStep = "request" | "verify";
+
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
+const RESEND_SECONDS = 60;
 
 function Logo() {
   return (
@@ -16,54 +19,76 @@ function Logo() {
 }
 
 export function LoginPage() {
-  const [channel, setChannel] = useState<Channel>("email");
+  const location = useLocation();
   const [method, setMethod] = useState<Method>("password");
   const [otpStep, setOtpStep] = useState<OtpStep>("request");
-  const [contact, setContact] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
+  const [cooldown, setCooldown] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const trimmed = () => contact.trim();
-  const ph = channel === "email" ? "you@example.com" : "+8613800138000";
+  const returnTo = `${location.pathname}${location.search}`;
+  const normalizedEmail = email.trim().toLowerCase();
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = window.setTimeout(() => setCooldown((value) => Math.max(0, value - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [cooldown]);
 
   async function run(fn: () => Promise<void>) {
     setBusy(true);
     setError(null);
     try {
       await fn();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "操作失败");
+    } catch (cause) {
+      setError(authErrorMessage(cause));
     } finally {
       setBusy(false);
     }
   }
+
+  function requireEmail() {
+    if (!EMAIL_RE.test(normalizedEmail)) throw new Error("请输入有效的邮箱地址");
+  }
+
   const signIn = () =>
     run(async () => {
-      const creds = channel === "email" ? { email: trimmed(), password } : { phone: trimmed(), password };
-      const { error: e } = await supabase.auth.signInWithPassword(creds);
-      if (e) throw e;
+      requireEmail();
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
+      if (signInError) throw signInError;
     });
+
   const sendCode = () =>
     run(async () => {
-      const t = channel === "email" ? { email: trimmed() } : { phone: trimmed() };
-      const { error: e } = await supabase.auth.signInWithOtp(t);
-      if (e) throw e;
+      requireEmail();
+      const { error: sendError } = await supabase.auth.signInWithOtp({
+        email: normalizedEmail,
+        options: { shouldCreateUser: false },
+      });
+      if (sendError) throw sendError;
       setOtpStep("verify");
+      setCooldown(RESEND_SECONDS);
     });
+
   const verify = () =>
     run(async () => {
-      const res =
-        channel === "email"
-          ? await supabase.auth.verifyOtp({ email: trimmed(), token: code.trim(), type: "email" })
-          : await supabase.auth.verifyOtp({ phone: trimmed(), token: code.trim(), type: "sms" });
-      if (res.error) throw res.error;
+      const token = code.replace(/\D/g, "");
+      if (token.length !== 6) throw new Error("请输入 6 位验证码");
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email: normalizedEmail,
+        token,
+        type: "email",
+      });
+      if (verifyError) throw verifyError;
     });
-  const devLogin = (email: string) =>
+
+  const devLogin = (value: string) =>
     run(async () => {
-      const { error: e } = await supabase.auth.signInWithPassword({ email, password: "Password123!" });
-      if (e) throw e;
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email: value, password: "Password123!" });
+      if (signInError) throw signInError;
     });
 
   return (
@@ -74,28 +99,21 @@ export function LoginPage() {
         <div className="mt-1.5 text-[15px]" style={{ color: "var(--label2)" }}>和朋友轻松 AA、记一笔、看谁欠谁</div>
       </div>
 
-      <Segmented
-        className="mb-4"
-        value={channel}
-        onChange={setChannel}
-        options={[{ value: "email", label: "邮箱" }, { value: "phone", label: "手机号" }]}
-      />
-
       {method === "password" && (
         <>
           <Card>
             <div className="flex h-12 items-center px-4">
-              <Input value={contact} onChange={(e) => setContact(e.target.value)} placeholder={ph} inputMode={channel === "email" ? "email" : "tel"} />
+              <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" inputMode="email" autoCapitalize="none" />
             </div>
             <Hairline />
             <div className="flex h-12 items-center px-4">
-              <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="密码" />
+              <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="密码" />
             </div>
           </Card>
           <div className="px-1 pt-2.5 text-right">
-            <button onClick={() => setMethod("otp")} className="text-[13.5px]" style={{ color: "var(--blue)" }}>用验证码登录</button>
+            <button onClick={() => { setMethod("otp"); setError(null); }} className="text-[13.5px]" style={{ color: "var(--blue)" }}>用邮箱验证码登录</button>
           </div>
-          <Button className="mt-4" disabled={busy || !contact || !password} onClick={signIn}>
+          <Button className="mt-4" disabled={busy || !email || !password} onClick={signIn}>
             {busy ? "登录中…" : "登录"}
           </Button>
         </>
@@ -105,30 +123,43 @@ export function LoginPage() {
         <>
           <Card>
             <div className="flex h-12 items-center px-4">
-              <Input value={contact} onChange={(e) => setContact(e.target.value)} placeholder={ph} inputMode={channel === "email" ? "email" : "tel"} />
+              <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" inputMode="email" autoCapitalize="none" />
             </div>
           </Card>
           <div className="px-1 pt-2.5 text-right">
-            <button onClick={() => setMethod("password")} className="text-[13.5px]" style={{ color: "var(--blue)" }}>用密码登录</button>
+            <button onClick={() => { setMethod("password"); setError(null); }} className="text-[13.5px]" style={{ color: "var(--blue)" }}>用密码登录</button>
           </div>
-          <Button className="mt-4" disabled={busy || !contact} onClick={sendCode}>{busy ? "发送中…" : "发送验证码"}</Button>
+          <Button className="mt-4" disabled={busy || !email} onClick={sendCode}>{busy ? "发送中…" : "发送 6 位验证码"}</Button>
         </>
       )}
 
       {method === "otp" && otpStep === "verify" && (
         <>
+          <p className="mb-2 px-1 text-[13px]" style={{ color: "var(--label2)" }}>验证码已发送至 {normalizedEmail}</p>
           <Card>
             <div className="flex h-12 items-center px-4">
-              <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="6 位验证码" inputMode="numeric" autoFocus />
+              <Input
+                value={code}
+                onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="6 位验证码"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                autoFocus
+              />
             </div>
           </Card>
-          <Button className="mt-4" disabled={busy || !code} onClick={verify}>{busy ? "验证中…" : "登录"}</Button>
-          <button onClick={() => setOtpStep("request")} className="mt-3 text-center text-[14px]" style={{ color: "var(--label2)" }}>← 换一个</button>
+          <Button className="mt-4" disabled={busy || code.length !== 6} onClick={verify}>{busy ? "验证中…" : "登录"}</Button>
+          <div className="mt-3 flex justify-center gap-5 text-[14px]">
+            <button disabled={busy || cooldown > 0} onClick={sendCode} style={{ color: cooldown > 0 ? "var(--placeholder)" : "var(--blue)" }}>
+              {cooldown > 0 ? `${cooldown} 秒后可重发` : "重新发送"}
+            </button>
+            <button onClick={() => { setOtpStep("request"); setCode(""); setError(null); }} style={{ color: "var(--label2)" }}>更换邮箱</button>
+          </div>
         </>
       )}
 
       <div className="mt-[18px] text-center text-[14px]" style={{ color: "var(--label2)" }}>
-        还没有账号？<Link to="/register" style={{ color: "var(--blue)" }}>去注册</Link>
+        还没有账号？<Link to="/register" state={{ returnTo }} style={{ color: "var(--blue)" }}>去注册</Link>
       </div>
 
       {error && <p className="mt-3 text-center text-[13px]" style={{ color: "var(--red)" }}>{error}</p>}

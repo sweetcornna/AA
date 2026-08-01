@@ -1,27 +1,50 @@
-#!/bin/bash
-# Build the arm64 debug APK. Retries up to 4x: Gradle caches every jar that
-# downloads cleanly, so even if a flake slips through, each run converges.
-cd /Users/cornna/project/AA/apps/app
-source /Users/cornna/project/AA/scripts/android-env.sh
-GRADLEW=/Users/cornna/project/AA/apps/app/src-tauri/gen/android/gradlew
-APK_DIR=/Users/cornna/project/AA/apps/app/src-tauri/gen/android/app/build/outputs/apk
+#!/usr/bin/env bash
+# Build one arm64-v8a APK. Release mode requires ignored keystore.properties.
+set -euo pipefail
 
-# Restart the daemon so the new -XX intrinsic flags take effect.
-"$GRADLEW" --stop 2>/dev/null || true
-pkill -f GradleDaemon 2>/dev/null || true
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+APP_DIR="$ROOT_DIR/apps/app"
+APK_ROOT="$APP_DIR/src-tauri/gen/android/app/build/outputs/apk"
+MODE="${1:-release}"
 
-for attempt in 1 2 3 4; do
-  echo ">>> ===== APK build attempt $attempt $(date) ====="
-  npm run tauri -- android build --debug --apk --target aarch64 2>&1
-  rc=$?
-  apk=$(find "$APK_DIR" -name "*debug*.apk" 2>/dev/null | head -1)
-  if [ -n "$apk" ]; then
-    echo ">>> APK BUILT: $apk ($(du -h "$apk" | cut -f1))"
-    echo ">>> APK BUILD DONE"
-    exit 0
-  fi
-  echo ">>> attempt $attempt rc=$rc, no APK yet — retrying"
-  sleep 4
-done
-echo ">>> APK BUILD FAILED after retries"
-exit 1
+if [[ -z "${VITE_SUPABASE_URL:-}" || -z "${VITE_SUPABASE_PUBLISHABLE_KEY:-}" ]]; then
+  echo "Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY for the target hosted environment." >&2
+  exit 1
+fi
+
+case "$MODE" in
+  release)
+    if [[ ! -f "$APP_DIR/src-tauri/gen/android/keystore.properties" ]]; then
+      echo "Missing apps/app/src-tauri/gen/android/keystore.properties; release signing fails closed." >&2
+      exit 1
+    fi
+    build_args=(--ci --apk --target aarch64)
+    output_dir="$APK_ROOT/universal/release"
+    output_kind="release"
+    ;;
+  debug)
+    build_args=(--debug --ci --apk --target aarch64)
+    output_dir="$APK_ROOT/universal/debug"
+    output_kind="debug"
+    ;;
+  *)
+    echo "Usage: $0 [release|debug]" >&2
+    exit 2
+    ;;
+esac
+
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/android-env.sh"
+
+rm -rf -- "$output_dir"
+cd "$APP_DIR"
+npm run tauri -- android build "${build_args[@]}"
+
+apk_count="$(find "$output_dir" -maxdepth 1 -type f -name "*$output_kind*.apk" -print | wc -l | tr -d ' ')"
+expected_apk="$output_dir/app-universal-$output_kind.apk"
+if [[ "$apk_count" != "1" || ! -f "$expected_apk" ]]; then
+  echo "Expected only $expected_apk, found $apk_count matching APK files." >&2
+  exit 1
+fi
+printf '%s\n' "$expected_apk"

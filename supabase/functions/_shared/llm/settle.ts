@@ -12,8 +12,8 @@ export function actionFromProposal(
   const circle = snap.circles.find((c) => c.id === circleId);
   const t = circle?.settlements[transferIndex];
   if (!circle || !t) return null;
-  // Only propose transfers the asking user is a party to.
-  if (t.fromId !== snap.me.id && t.toId !== snap.me.id) return null;
+  // Only the debtor can confirm payment, so creditor-side proposals are omitted.
+  if (t.fromId !== snap.me.id) return null;
   return {
     type: "settle_up",
     circleId: circle.id,
@@ -36,7 +36,7 @@ export function findSettleProposal(question: string, snap: Snapshot): SettleUpAc
   for (const c of snap.circles) {
     for (let i = 0; i < c.settlements.length; i++) {
       const t = c.settlements[i];
-      if (t.fromId !== snap.me.id && t.toId !== snap.me.id) continue;
+      if (t.fromId !== snap.me.id) continue;
       const counterparty = t.fromId === snap.me.id ? t.toName : t.fromName;
       // If the question names some member, require that member to be this
       // transfer's counterparty (so "和小明结账" doesn't propose 小红's transfer).
