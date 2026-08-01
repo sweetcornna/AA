@@ -9,11 +9,12 @@ services:
       - restore-db-config:/etc/postgresql-custom
       - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:ro
       - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
+      - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:ro
       - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
       - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
       - ./templates/db/aa-prerequisites.sql:/docker-entrypoint-initdb.d/migrations/98-aa-prerequisites.sql:ro
-      # webhooks.sql is intentionally omitted: it installs optional pg_net
-      # database-webhook helpers that none of this seven-service subset uses.
+      # webhooks.sql creates supabase_functions_admin before roles.sql alters it;
+      # retain this upstream dependency even though database webhooks are unused.
       # logs.sql and pooler.sql remain excluded with Analytics and Supavisor.
     environment:
       POSTGRES_HOST: /var/run/postgresql

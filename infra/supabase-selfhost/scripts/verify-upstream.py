@@ -18,6 +18,7 @@ EXPECTED_FILES = {
     "db/jwt.sql": "0444",
     "db/realtime.sql": "0444",
     "db/roles.sql": "0444",
+    "db/webhooks.sql": "0444",
     "functions/main/index.ts": "0444",
 }
 
