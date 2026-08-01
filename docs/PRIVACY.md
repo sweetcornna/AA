@@ -54,8 +54,8 @@ APK 只允许包含 exact production HTTPS origin、public anon/publishable key 
 - 数据控制者法定名称：`<REQUIRED>`
 - 隐私联系邮箱/渠道：`<REQUIRED>`
 - 账号与账本数据删除申请方式和响应期限：`<REQUIRED>`
-- production Azure subscription/region 与 Azure 数据处理条款确认：`<REQUIRED>`
+- production Azure subscription/region 与 Azure 数据处理条款确认：Azure 订阅 `0494e02f-d465-447e-b6b5-db27a0a65c0f`，资源组 `cornna_group`，VM `cornna`（`Standard_B2ats_v2`），区域 **Japan East**（已从 VM 实例元数据核实）。Microsoft 产品条款与数据保护附录见 <https://www.microsoft.com/licensing/terms/product/ForallOnlineServices/all> 与 <https://www.microsoft.com/licensing/docs/view/Microsoft-Products-and-Services-Data-Protection-Addendum-DPA>。**运营方须确认所签订阅协议版本并在此记录。**
 - Resend 数据处理与保留政策链接/版本：Data Processing Addendum（更新日期 2025-12-31）<https://resend.com/legal/dpa>；隐私政策 <https://resend.com/legal/privacy-policy>；子处理者清单 <https://resend.com/legal/subprocessors>。DPA Exhibit A 载明账户终止后 90 天内删除用户/收件人数据。**发布前须由运营方复核当时的最新版本日期。**
 - OpenAI ASR 数据处理与实际账户保留设置链接/版本：平台数据控制说明 <https://developers.openai.com/api/docs/guides/your-data>；企业隐私 <https://openai.com/enterprise-privacy/>。默认 API 输入/输出最多保留 30 天用于服务与滥用检测，之后删除（法律要求除外）；Zero Data Retention 需申请且仅限符合条件的端点与用例。**本项目当前未确认已获批 ZDR，因此按默认 30 天保留描述；不得声称零保留，除非运营方在实际账户设置中核实并在此记录。**
-- Azure Blob backup retention 与删除策略：`<REQUIRED>`
+- Azure Blob backup retention 与删除策略：**当前不使用 Azure Blob。** 该 VM 无 managed identity（IMDS 返回 `Identity not found`），备份运行于 local-only 模式：每次备份为 `pg_dump --format=custom` 直接管道进 age 加密（任何环节不写明文到磁盘），存放于服务器 `/srv/aa/backups/production`（root-only `0700`），本地保留 30 天。**已知风险：加密备份与数据库位于同一块磁盘，磁盘损坏将同时失去两者。** 当前缓解措施为将加密备份与离机 age 私钥另存于运营方本地，已实测可独立解密恢复。启用 Blob 后须在此记录容器名、retention/soft delete/versioning/immutability 策略与 managed identity 权限。
 - 生效日期与版本化变更记录：`<REQUIRED>`
