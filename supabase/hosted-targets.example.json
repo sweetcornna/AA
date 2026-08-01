@@ -1,12 +1,6 @@
 {
-  "schemaVersion": 2,
-  "staging": {
-    "deploymentType": "self-hosted",
-    "stackId": "aa-staging-primary",
-    "serverId": "azure-aa-40-115-207-13",
-    "apiOrigin": "https://staging-api.cornna.xyz",
-    "region": "japaneast"
-  },
+  "schemaVersion": 3,
+  "deploymentMode": "single-stack",
   "production": {
     "deploymentType": "self-hosted",
     "stackId": "aa-production-primary",

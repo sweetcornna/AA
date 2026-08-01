@@ -1,0 +1,74 @@
+services:
+  db:
+    # 256 MiB leaves room for the six application services. PostgreSQL is kept
+    # small with a 32 MiB shared cache, 30 connections, and per-operation memory
+    # below 1 MiB so a handful of concurrent private users cannot multiply RAM.
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - log_min_messages=warning
+      - -c
+      - log_statement=none
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - effective_cache_size=128MB
+      - -c
+      - max_connections=30
+      - -c
+      - work_mem=512kB
+      - -c
+      - maintenance_work_mem=16MB
+      - -c
+      - autovacuum_work_mem=8MB
+      - -c
+      - jit=off
+    shm_size: 64mb
+    mem_limit: 256m
+    cpus: 0.65
+
+  templates:
+    # Static nginx serves one tiny immutable HTML file. Its tmpfs ceilings total
+    # 9 MiB so they cannot exceed the 16 MiB container budget by themselves.
+    tmpfs:
+      - /var/cache/nginx:size=4m
+      - /var/run:size=1m
+      - /tmp:size=4m
+    mem_limit: 16m
+    cpus: 0.05
+
+  auth:
+    # Five database connections are enough for the private-user workload and
+    # keep GoTrue inside a 64 MiB process budget.
+    environment:
+      GOTRUE_DB_MAX_POOL_SIZE: "5"
+    mem_limit: 64m
+    cpus: 0.20
+
+  rest:
+    # PostgREST is lightweight; cap its database pool before enforcing 32 MiB.
+    environment:
+      PGRST_DB_POOL: "5"
+    mem_limit: 32m
+    cpus: 0.15
+
+  realtime:
+    # Realtime/BEAM needs more baseline memory than the Go services, but a pool
+    # of five is sufficient for a handful of private users.
+    environment:
+      DB_POOL_SIZE: "5"
+    mem_limit: 96m
+    cpus: 0.25
+
+  functions:
+    # Deno receives the largest application allowance for function execution
+    # and transient request buffers without letting it consume the host.
+    mem_limit: 144m
+    cpus: 0.35
+
+  kong:
+    # Kong retains enough memory for the configured proxy buffers and plugins.
+    mem_limit: 80m
+    cpus: 0.20

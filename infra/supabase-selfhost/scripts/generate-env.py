@@ -60,6 +60,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("environment", choices=TARGETS)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--profile", choices=("dual-stack", "single-stack"), default="dual-stack")
     parser.add_argument("--fingerprint", required=True)
     parser.add_argument("--smtp-admin-email", required=True)
     parser.add_argument("--provider-secrets", required=True, type=Path)
@@ -68,6 +69,8 @@ def main() -> None:
     parser.add_argument("--azure-storage-container", required=True)
     args = parser.parse_args()
 
+    if args.profile == "single-stack" and args.environment != "production":
+        raise SystemExit("single-stack profile only permits a production environment")
     if not re.fullmatch(r"[0-9a-f]{64}", args.fingerprint):
         raise SystemExit("fingerprint must be a lowercase SHA-256")
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", args.smtp_admin_email):
@@ -121,7 +124,7 @@ def main() -> None:
     with os.fdopen(descriptor, "w") as stream:
         for key, value in values.items():
             stream.write(f"{key}={value}\n")
-    print(f"Wrote root-only {args.environment} environment configuration.")
+    print(f"Wrote root-only {args.environment} environment configuration for {args.profile}.")
 
 
 if __name__ == "__main__":

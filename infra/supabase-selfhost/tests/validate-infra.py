@@ -9,7 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 INFRA = ROOT / "infra/supabase-selfhost"
 COMPOSE = INFRA / "compose.base.yml"
+SINGLE_COMPOSE = INFRA / "compose.single-stack.yml"
 RESTORE_COMPOSE = INFRA / "compose.restore.yml"
+SINGLE_RESTORE_COMPOSE = INFRA / "compose.restore.single-stack.yml"
 EXPECTED_SERVICES = {"db", "templates", "auth", "rest", "realtime", "functions", "kong"}
 EXPECTED_NETWORKS = {
     "db": {"backend"},
@@ -55,14 +57,14 @@ def sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def check_capacity_os_gate() -> None:
+def check_capacity_profiles() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         binaries = root / "bin"
         binaries.mkdir()
         for name, source in {
             "getconf": "#!/bin/sh\nprintf '4\\n'\n",
-            "df": "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 50000000 1 49999999 1%% /\\n'\n",
+            "df": "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 60000000 1 52428800 1%% /\\n'\n",
         }.items():
             path = binaries / name
             path.write_text(source)
@@ -71,8 +73,9 @@ def check_capacity_os_gate() -> None:
         os_release = root / "os-release"
         meminfo = root / "meminfo"
         meminfo.write_text("MemTotal:       8388608 kB\n")
-        target = root / "target"
-        target.mkdir()
+        targets = [root / "srv-aa", root / "docker-root"]
+        for target in targets:
+            target.mkdir()
         capacity = (INFRA / "scripts/capacity-check.sh").read_text()
         capacity = capacity.replace("/etc/os-release", str(os_release)).replace("/proc/meminfo", str(meminfo))
         script = root / "capacity-check.sh"
@@ -80,28 +83,80 @@ def check_capacity_os_gate() -> None:
         script.chmod(0o755)
         environment = {**os.environ, "PATH": f"{binaries}:{os.environ['PATH']}"}
 
-        def run(identifier: str, version: str) -> subprocess.CompletedProcess[str]:
+        def run(
+            identifier: str,
+            version: str,
+            cpus: int,
+            memory_kib: int,
+            *arguments: str,
+            extra_environment: dict[str, str] | None = None,
+        ) -> subprocess.CompletedProcess[str]:
             os_release.write_text(f'ID={identifier}\nVERSION_ID="{version}"\n')
+            (binaries / "getconf").write_text(f"#!/bin/sh\nprintf '{cpus}\\n'\n")
+            (binaries / "getconf").chmod(0o755)
+            meminfo.write_text(
+                f"MemTotal:       {memory_kib} kB\n"
+                "MemAvailable:   401408 kB\n"
+                "SwapTotal:      4194304 kB\n"
+            )
             return subprocess.run(
-                ["bash", str(script), str(target)],
-                env=environment,
+                ["bash", str(script), *arguments, *(str(target) for target in targets)],
+                env={**environment, **(extra_environment or {})},
                 text=True,
                 capture_output=True,
             )
 
         for version in ("12", "13"):
-            result = run("debian", version)
+            result = run("debian", version, 4, 8388608)
             check(result.returncode == 0, f"Debian {version} must pass the supported OS fixture: {result.stderr}")
-        result = run("debian", "11")
+        result = run("debian", "11", 4, 8388608)
         check(
-            result.returncode != 0 and "Debian version gate failed: 11 < 12" in result.stderr,
+            result.returncode != 0 and "Debian version gate failed for dual-stack: 11 < 12" in result.stderr,
             "Debian 11 must fail the supported OS gate",
         )
-        result = run("ubuntu", "24")
+        result = run("ubuntu", "24", 4, 8388608)
         check(
             result.returncode != 0 and "Only a supported Debian host is approved" in result.stderr,
             "non-Debian hosts must fail the supported OS gate",
         )
+
+        # The target VM's CPU/RAM/disk clear the single-stack floors, but it
+        # still runs Debian 11, whose LTS ends 2026-08-31. The OS gate is a
+        # security requirement, not a capacity trade-off, so it must reject the
+        # host as it exists today and only pass once the OS is upgraded.
+        current_vm = run("debian", "11", 2, 935936, "--profile", "single-stack")
+        check(
+            current_vm.returncode != 0
+            and "Debian version gate failed for single-stack: 11 < 12" in current_vm.stderr,
+            "the unsupported Debian 11 host must fail even in single-stack mode",
+        )
+
+        upgraded_vm = run("debian", "12", 2, 935936, "--profile", "single-stack")
+        check(upgraded_vm.returncode == 0, f"upgraded single-stack VM fixture must pass: {upgraded_vm.stderr}")
+        check(upgraded_vm.stdout.count("Disk gate passed") == 2, "single-stack fixture must check both filesystems")
+        print("Single-stack upgraded-VM fixture output:")
+        print(upgraded_vm.stdout.strip())
+
+        below_floor = run("debian", "12", 2, 917503, "--profile", "single-stack")
+        check(
+            below_floor.returncode != 0 and "RAM gate failed: 917503 KiB < 917504 KiB" in below_floor.stderr,
+            "single-stack RAM floor must fail closed",
+        )
+        print("Single-stack below-floor fixture output:")
+        print(below_floor.stderr.strip())
+
+        # Use a supported OS so this exercises the override guard itself rather
+        # than tripping the Debian gate first.
+        lowered = run(
+            "debian", "12", 2, 935936, "--profile", "single-stack",
+            extra_environment={"AA_MIN_MEMORY_KIB": "1"},
+        )
+        check(
+            lowered.returncode != 0 and "cannot be lower than the single-stack floor" in lowered.stderr,
+            "single-stack environment overrides must not lower the hard floor",
+        )
+        unknown = run("debian", "12", 4, 8388608, "--profile", "skip")
+        check(unknown.returncode != 0 and "Unknown capacity profile" in unknown.stderr, "unknown capacity profiles must fail closed")
 
 
 def write_artifact_fixture(runtime: Path, fingerprint: dict, upstream_commit: str) -> tuple[Path, Path]:
@@ -138,7 +193,7 @@ def write_artifact_fixture(runtime: Path, fingerprint: dict, upstream_commit: st
 
 
 def main() -> None:
-    check_capacity_os_gate()
+    check_capacity_profiles()
     source = COMPOSE.read_text()
     check("container_name:" not in source, "Compose must not pin container names")
     check("latest" not in source, "Compose must not use latest tags")
@@ -253,6 +308,9 @@ def main() -> None:
         check(required in canary, f"production canary contract missing: {required}")
     for forbidden in ("service_role", 'from("auth.users")', 'from("asr_usage").delete', "verify-backend.mjs"):
         check(forbidden not in canary, f"production canary contains forbidden behavior: {forbidden}")
+    destructive_backend = (ROOT / "scripts/verify-backend.mjs").read_text()
+    check('deploymentMode !== "dual-stack"' in destructive_backend, "remote destructive tests must reject single-stack targets")
+    check("remote destructive tests require an approved dual-stack target manifest" in destructive_backend, "single-stack destructive-test rejection must be explicit")
 
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -362,6 +420,39 @@ def main() -> None:
             subprocess.run(["python3", str(INFRA / "scripts/validate-env.py"), str(env_path)], check=True, stdout=subprocess.DEVNULL)
             envs[environment] = env_path
         subprocess.run(["python3", str(INFRA / "scripts/validate-pair.py"), str(envs["staging"]), str(envs["production"])], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([
+            "python3", str(INFRA / "scripts/validate-env.py"), str(envs["production"]),
+            "--profile", "single-stack",
+        ], check=True, stdout=subprocess.DEVNULL)
+        expect_failure([
+            "python3", str(INFRA / "scripts/validate-env.py"), str(envs["staging"]),
+            "--profile", "single-stack",
+        ])
+        expect_failure([
+            "python3", str(INFRA / "scripts/generate-env.py"), "staging", str(root / "single-staging.env"),
+            "--profile", "single-stack",
+            "--fingerprint", fingerprint,
+            "--smtp-admin-email", "aa-staging@cornna.xyz",
+            "--provider-secrets", str(provider_staging),
+            "--backup-recipient", "age1" + "q" * 58,
+            "--azure-storage-account", "aabackupaccount",
+            "--azure-storage-container", "aa-staging",
+        ])
+        single_production_env = root / "single-production.env"
+        subprocess.run([
+            "python3", str(INFRA / "scripts/generate-env.py"), "production", str(single_production_env),
+            "--profile", "single-stack",
+            "--fingerprint", fingerprint,
+            "--smtp-admin-email", "aa-production-single@cornna.xyz",
+            "--provider-secrets", str(provider_production),
+            "--backup-recipient", "age1" + "s" * 58,
+            "--azure-storage-account", "aabackupaccount",
+            "--azure-storage-container", "aa-production-single",
+        ], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([
+            "python3", str(INFRA / "scripts/validate-env.py"), str(single_production_env),
+            "--profile", "single-stack",
+        ], check=True, stdout=subprocess.DEVNULL)
 
         mismatched_fingerprint = root / "mismatched-fingerprint.env"
         mismatched_fingerprint.write_text(envs["production"].read_text().replace(
@@ -416,6 +507,21 @@ def main() -> None:
         stale_command = migration_command.copy()
         stale_command[stale_command.index(str(envs["staging"]))] = str(stale_fingerprint_env)
         expect_failure(stale_command)
+
+        single_migration_command = [
+            "python3", str(INFRA / "scripts/run-migrations.py"),
+            "--profile", "single-stack",
+            "--expected-environment", "production",
+            "--env-file", str(envs["production"]),
+            "--compose-file", str(COMPOSE),
+            "--migrations", str(ROOT / "supabase/migrations"),
+            "--dry-run",
+        ]
+        subprocess.run(single_migration_command, check=True, stdout=subprocess.DEVNULL)
+        wrong_single_migration = single_migration_command.copy()
+        wrong_single_migration[wrong_single_migration.index("production")] = "staging"
+        wrong_single_migration[wrong_single_migration.index(str(envs["production"]))] = str(envs["staging"])
+        expect_failure(wrong_single_migration)
 
         env_symlink = root / "staging-symlink.env"
         env_symlink.symlink_to(envs["staging"])
@@ -489,6 +595,14 @@ def main() -> None:
             "python3", str(INFRA / "scripts/validate-restore-env.py"), str(restore_env),
             "--disjoint-from", str(envs["staging"]), "--disjoint-from", str(envs["production"]),
         ], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([
+            "python3", str(INFRA / "scripts/validate-restore-env.py"), str(restore_env),
+            "--profile", "single-stack", "--disjoint-from", str(envs["production"]),
+        ], check=True, stdout=subprocess.DEVNULL)
+        expect_failure([
+            "python3", str(INFRA / "scripts/validate-restore-env.py"), str(restore_env),
+            "--profile", "single-stack", "--disjoint-from", str(envs["staging"]),
+        ])
 
         equal_restore = root / "equal-restore.env"
         equal_restore.write_text(restore_env.read_text().replace(
@@ -547,6 +661,38 @@ def main() -> None:
         ], env={**os.environ, **values}, check=True, capture_output=True, text=True)
         parsed = json.loads(config.stdout)
 
+        single_values = {}
+        for line in envs["production"].read_text().splitlines():
+            key, value = line.split("=", 1)
+            single_values[key] = value
+        single_values["AA_UPSTREAM_DIR"] = str(runtime / "upstream")
+        single_values["AA_FUNCTIONS_DIR"] = str(runtime / "functions")
+        single_values["AA_TEMPLATE_DIR"] = str(runtime / "templates")
+        single_config = subprocess.run([
+            "docker", "compose", "--env-file", str(envs["production"]),
+            "-f", str(COMPOSE), "-f", str(SINGLE_COMPOSE), "config", "--format", "json",
+        ], env={**os.environ, **single_values}, check=True, capture_output=True, text=True)
+        single_parsed = json.loads(single_config.stdout)
+
+        single_restore_config = subprocess.run([
+            "docker", "compose", "--project-name", restore_values["AA_STACK_ID"],
+            "--env-file", str(restore_env), "-f", str(RESTORE_COMPOSE),
+            "-f", str(SINGLE_RESTORE_COMPOSE), "config", "--format", "json",
+        ], env={**os.environ, **restore_values}, check=True, capture_output=True, text=True)
+        single_restore_parsed = json.loads(single_restore_config.stdout)
+
+        nginx_template = INFRA / "templates/nginx/aa-api.conf.template"
+        nginx_output = root / "production-nginx.conf"
+        subprocess.run([
+            "python3", str(INFRA / "scripts/render-nginx.py"), "production",
+            str(nginx_template), str(nginx_output), "--profile", "single-stack",
+        ], check=True, stdout=subprocess.DEVNULL)
+        check("api.cornna.xyz" in nginx_output.read_text(), "single-stack Nginx render missed production host")
+        expect_failure([
+            "python3", str(INFRA / "scripts/render-nginx.py"), "staging",
+            str(nginx_template), str(root / "staging-nginx.conf"), "--profile", "single-stack",
+        ])
+
     locks = parse_lock()
     expected_images = {service: locks[key] for service, key in IMAGE_LOCK_KEYS.items()}
     services = parsed["services"]
@@ -580,6 +726,42 @@ def main() -> None:
     check(not networks["egress"].get("internal", False), "egress network must permit provider access")
     check(not networks["gateway"].get("internal", False), "gateway network must support the loopback host bind")
 
+    single_services = single_parsed["services"]
+    check(set(single_services) == EXPECTED_SERVICES, "single-stack overlay changed the required service set")
+    expected_single_memory_mib = {
+        "db": 256,
+        "templates": 16,
+        "auth": 64,
+        "rest": 32,
+        "realtime": 96,
+        "functions": 144,
+        "kong": 80,
+    }
+    check(sum(expected_single_memory_mib.values()) == 688, "single-stack memory budget must total 688 MiB")
+    for name, expected_memory_mib in expected_single_memory_mib.items():
+        check(
+            single_services[name]["mem_limit"] == str(expected_memory_mib * 1024 * 1024),
+            f"single-stack {name} memory limit mismatch: {single_services[name]['mem_limit']!r}",
+        )
+    db_command = single_services["db"]["command"]
+    for setting in (
+        "shared_buffers=32MB", "effective_cache_size=128MB", "max_connections=30",
+        "work_mem=512kB", "maintenance_work_mem=16MB", "autovacuum_work_mem=8MB", "jit=off",
+    ):
+        check(setting in db_command, f"single-stack PostgreSQL tuning missing: {setting}")
+    check(single_services["auth"]["environment"]["GOTRUE_DB_MAX_POOL_SIZE"] == "5", "single-stack Auth pool mismatch")
+    check(single_services["rest"]["environment"]["PGRST_DB_POOL"] == "5", "single-stack REST pool mismatch")
+    check(single_services["realtime"]["environment"]["DB_POOL_SIZE"] == "5", "single-stack Realtime pool mismatch")
+    check(set(single_services["templates"]["tmpfs"]) == {
+        "/var/cache/nginx:size=4m", "/var/run:size=1m", "/tmp:size=4m",
+    }, "single-stack template tmpfs budget mismatch")
+    single_source = SINGLE_COMPOSE.read_text()
+    for rationale in (
+        "six application services", "Static nginx", "Five database connections",
+        "PostgREST is lightweight", "Realtime/BEAM", "Deno", "proxy buffers",
+    ):
+        check(rationale in single_source, f"single-stack resource rationale missing: {rationale}")
+
     restore_source = RESTORE_COMPOSE.read_text()
     check("container_name:" not in restore_source, "restore Compose must not pin container names")
     check("ports:" not in restore_source, "restore Compose must not expose host ports")
@@ -612,10 +794,21 @@ def main() -> None:
         check(volume.get("external") is not True, f"restore volume {name} must not be external")
     check(restore_parsed["networks"]["restore-internal"].get("internal") is True, "restore network must be internal")
     check(restore_parsed["networks"]["restore-internal"].get("name") == f"{restore_values['AA_STACK_ID']}_restore-internal", "restore network is not project-scoped")
+    check(set(single_restore_parsed["services"]) == {"db"}, "single-stack restore overlay must remain database-only")
+    single_restore_db = single_restore_parsed["services"]["db"]
+    check(single_restore_db["mem_limit"] == str(256 * 1024 * 1024), "single-stack restore database memory limit mismatch")
+    check(single_restore_db["shm_size"] == str(64 * 1024 * 1024), "single-stack restore shared memory mismatch")
+    for setting in ("shared_buffers=32MB", "max_connections=30", "work_mem=512kB"):
+        check(setting in single_restore_db["command"], f"single-stack restore PostgreSQL tuning missing: {setting}")
+    check(not single_restore_db.get("ports"), "single-stack restore database must not expose host ports")
+    check(set(single_restore_db.get("networks", {})) == {"restore-internal"}, "single-stack restore network isolation changed")
 
     restore_script = (INFRA / "scripts/restore-drill.sh").read_text()
     for required in (
-        "--disjoint-from \"$STAGING_ENV\" --disjoint-from \"$PRODUCTION_ENV\"",
+        'PROFILE=dual-stack', 'restore_validation+=(--disjoint-from "$deployment_env")',
+        'capacity-check.sh" --profile "$PROFILE" /srv/aa',
+        'compose.restore.single-stack.yml', "Production must be stopped before a single-stack restore drill",
+        "Single-stack restore drills only accept production backups",
         "--project-name \"$AA_STACK_ID\"", "createdb -U postgres -T template0 -O postgres aa_restore",
         "pg_restore -U postgres -d aa_restore --single-transaction --exit-on-error",
         "psql -U postgres -d aa_restore", "decrypted backup is not a PostgreSQL custom archive",
@@ -657,14 +850,41 @@ def main() -> None:
     check("read_timeout: 55000" in kong and "write_timeout: 55000" in kong, "function gateway timeout mismatch")
 
     capacity = (INFRA / "scripts/capacity-check.sh").read_text()
-    check("MIN_CPUS >= APPROVED_MIN_CPUS" in capacity and "MIN_MEMORY_KIB >= APPROVED_MIN_MEMORY_KIB" in capacity and "MIN_DISK_KIB >= APPROVED_MIN_DISK_KIB" in capacity, "capacity thresholds must not be lowerable")
+    for unchanged in (
+        "APPROVED_MIN_CPUS=4", "APPROVED_MIN_MEMORY_KIB=8388608",
+        "APPROVED_MIN_DISK_KIB=41943040", "APPROVED_MIN_DEBIAN_VERSION=12",
+    ):
+        check(unchanged in capacity, f"dual-stack threshold changed: {unchanged}")
+    for single_floor in (
+        "SINGLE_STACK_MIN_CPUS=2", "SINGLE_STACK_MIN_MEMORY_KIB=917504",
+        "SINGLE_STACK_MIN_DISK_KIB=20971520",
+        # The OS floor is a security gate, not a capacity trade-off: both
+        # profiles must require the same supported Debian release.
+        'SINGLE_STACK_MIN_DEBIAN_VERSION="$APPROVED_MIN_DEBIAN_VERSION"',
+    ):
+        check(single_floor in capacity, f"single-stack floor missing: {single_floor}")
+    for rationale in (
+        "observed/planning footprint for one seven-service stack", "about 650-700",
+        "db 256 + templates 16 + auth 64 + rest 32", "functions 144 + kong 80 = 688 MiB",
+        "130 MiB for the existing", "78 MiB for Debian kernel/daemons",
+        "swap is", "20 GiB holds one pinned image set",
+    ):
+        check(rationale in capacity, f"single-stack capacity rationale missing: {rationale}")
+    check("PROFILE=dual-stack" in capacity, "dual-stack must remain the default capacity profile")
+    check("dual-stack)" in capacity and "single-stack)" in capacity, "capacity profiles must be explicit and closed")
+    check("MIN_CPUS >= PROFILE_MIN_CPUS" in capacity and "MIN_MEMORY_KIB >= PROFILE_MIN_MEMORY_KIB" in capacity and "MIN_DISK_KIB >= PROFILE_MIN_DISK_KIB" in capacity, "selected profile thresholds must not be lowerable")
+    check("SKIP" not in capacity.upper() and "BYPASS" not in capacity.upper(), "capacity gate must not expose a skip or bypass path")
     check("APPROVED_MIN_DEBIAN_VERSION=12" in capacity, "capacity gate must reject the Debian 11 host")
     check('[[ "${ID:-}" == "debian"' in capacity, "capacity gate must require an approved Debian host")
-    check("VERSION_ID >= APPROVED_MIN_DEBIAN_VERSION" in capacity, "Debian version gate must not be bypassable")
+    check("VERSION_ID >= PROFILE_MIN_DEBIAN_VERSION" in capacity, "Debian version gate must apply in every profile")
     check('for target_path in "${TARGET_PATHS[@]}"' in capacity, "capacity gate must check every supplied filesystem path")
     compose_wrapper = (INFRA / "scripts/compose.sh").read_text()
+    check("PROFILE=dual-stack" in compose_wrapper, "Compose wrapper must default to dual-stack")
+    check('validate-env.py" "$ENV_FILE" --profile "$PROFILE"' in compose_wrapper, "Compose wrapper must bind env validation to the selected profile")
+    check('compose.single-stack.yml' in compose_wrapper, "Compose wrapper must select the single-stack overlay")
     check("docker info --format '{{.DockerRootDir}}'" in compose_wrapper, "Compose wrapper must resolve Docker data root")
-    check('capacity-check.sh" /srv/aa "$docker_root"' in compose_wrapper, "Compose wrapper must enforce both application and Docker disk capacity")
+    check(compose_wrapper.count('capacity-check.sh" --profile "$PROFILE"') == 2, "Compose wrapper must gate before Docker and recheck both filesystems")
+    check('capacity-check.sh" --profile "$PROFILE" /srv/aa "$docker_root"' in compose_wrapper, "Compose wrapper must enforce both application and Docker disk capacity")
     for required in (
         'verify-upstream.py" "$AA_UPSTREAM_DIR"',
         'verify-artifact.py" "$AA_FUNCTIONS_DIR"',
@@ -674,10 +894,30 @@ def main() -> None:
         'down|rm|--volumes|-v)',
     ):
         check(required in compose_wrapper, f"Compose activation contract missing: {required}")
+    artifact_index = compose_wrapper.index("verify-artifact.py")
+    destructive_index = compose_wrapper.index('down|rm|--volumes|-v)')
+    first_capacity_index = compose_wrapper.index('capacity-check.sh" --profile "$PROFILE"')
+    docker_info_index = compose_wrapper.index("docker info")
+    second_capacity_index = compose_wrapper.rindex('capacity-check.sh" --profile "$PROFILE"')
+    exec_index = compose_wrapper.index("exec docker compose")
     check(
-        compose_wrapper.index("verify-artifact.py") < compose_wrapper.index("docker info") < compose_wrapper.index("exec docker compose"),
-        "Compose must verify immutable artifacts before any Docker Compose operation",
+        artifact_index < destructive_index < first_capacity_index < docker_info_index < second_capacity_index < exec_index,
+        "Compose must verify artifacts, reject destructive arguments, and pass capacity gates before Compose",
     )
+    check(
+        destructive_index < compose_wrapper.index('if [[ "$PROFILE" == "single-stack" ]]'),
+        "destructive-command rejection must apply before either deployment mode diverges",
+    )
+
+    runbook = (ROOT / "docs/HOSTED_DEPLOYMENT.md").read_text()
+    for required in (
+        "deliberate deviation", "--profile single-stack", "917,504 KiB", "20,971,520 KiB",
+        "没有 staging validation", "所有变更直接进入 production", "PostgreSQL 在压力下可能触及 swap",
+        "host OOM 或单容器 OOM 风险", "Xray、beszel、beszel-agent 和 uptime-kuma",
+        "isolation proof **没有执行**", "drill 前 production 必须停止",
+        "Single-stack recovery expectations", "RPO 24h、RTO 4h",
+    ):
+        check(required in runbook, f"single-stack runbook disclosure missing: {required}")
 
     prepare_upstream = (INFRA / "scripts/prepare-upstream.sh").read_text()
     build_functions = (INFRA / "scripts/build-functions.sh").read_text()
@@ -712,6 +952,29 @@ def main() -> None:
     )
     check('"SMTP_ADMIN_EMAIL"' in pair_validator, "staging and production SMTP senders must differ")
     check('"BACKUP_AGE_RECIPIENT"' in pair_validator, "staging and production backup recipients must differ")
+    for single_path in (
+        INFRA / "scripts/compose.sh",
+        INFRA / "scripts/generate-env.py",
+        INFRA / "scripts/validate-env.py",
+        INFRA / "scripts/run-migrations.py",
+        INFRA / "scripts/render-nginx.py",
+        INFRA / "scripts/restore-drill.sh",
+    ):
+        check("validate-pair.py" not in single_path.read_text(), f"single-stack path unexpectedly requires pair validation: {single_path.name}")
+
+    hosted = (ROOT / "scripts/hosted-deployment.mjs").read_text()
+    for required in (
+        'const DEPLOYMENT_MODES = new Set(["dual-stack", "single-stack"])',
+        'parsed.schemaVersion === 2', 'parsed.schemaVersion === 3', 'deploymentMode === "single-stack"',
+        'single-stack hosted targets must not define staging',
+        'target is unavailable in ${targets.deploymentMode} mode',
+        'command === "deployment-mode"',
+    ):
+        check(required in hosted, f"hosted target mode contract missing: {required}")
+    hosted_example = json.loads((ROOT / "supabase/hosted-targets.example.json").read_text())
+    check(hosted_example.get("schemaVersion") == 3, "hosted target example schema mismatch")
+    check(hosted_example.get("deploymentMode") == "single-stack", "hosted target example must opt into single-stack")
+    check("staging" not in hosted_example and "production" in hosted_example, "single-stack hosted example must be production-only")
 
     backup_script = (INFRA / "scripts/backup.sh").read_text()
     for required in (
@@ -728,14 +991,18 @@ def main() -> None:
     check("Applied migration ledger contains a file absent from the source directory" in migration_runner, "migration runner must reject unknown ledger entries")
     check("Applied migration ledger is not a continuous source prefix" in migration_runner, "migration runner must reject non-prefix ledger state")
     for required in (
+        'parser.add_argument("--profile", choices=("dual-stack", "single-stack"), default="dual-stack")',
         'parser.add_argument("--expected-environment", required=True',
         'validate-env.py"), str(args.env_file)',
+        '"--profile", args.profile',
         'APPROVED_COMPOSE = INFRA / "compose.base.yml"',
+        'SINGLE_STACK_COMPOSE = INFRA / "compose.single-stack.yml"',
         'APPROVED_MIGRATIONS = ROOT / "supabase/migrations"',
         "is not the repository-approved path",
         'hosted-deployment.mjs"), "fingerprint"',
         "current hosted-deployment fingerprint does not match AA_SOURCE_FINGERPRINT",
         '"--project-name", environment["AA_STACK_ID"]',
+        'compose.extend(["-f", str(SINGLE_STACK_COMPOSE)])',
     ):
         check(required in migration_runner, f"migration target-binding contract missing: {required}")
     print("Self-host infrastructure invariants passed.")

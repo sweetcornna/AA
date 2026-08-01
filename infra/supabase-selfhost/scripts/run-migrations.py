@@ -12,6 +12,7 @@ LOCK_KEY = "584379251642045998"
 ROOT = Path(__file__).resolve().parents[3]
 INFRA = ROOT / "infra/supabase-selfhost"
 APPROVED_COMPOSE = INFRA / "compose.base.yml"
+SINGLE_STACK_COMPOSE = INFRA / "compose.single-stack.yml"
 APPROVED_MIGRATIONS = ROOT / "supabase/migrations"
 
 
@@ -43,6 +44,7 @@ def parse_env(path: Path) -> dict[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--profile", choices=("dual-stack", "single-stack"), default="dual-stack")
     parser.add_argument("--expected-environment", required=True, choices=("staging", "production"))
     parser.add_argument("--env-file", required=True, type=Path)
     parser.add_argument("--compose-file", required=True, type=Path)
@@ -52,7 +54,10 @@ def main() -> None:
 
     compose_file = approved_path(args.compose_file, APPROVED_COMPOSE, "Compose file")
     migrations = approved_path(args.migrations, APPROVED_MIGRATIONS, "migration directory")
-    validator = ["python3", str(INFRA / "scripts/validate-env.py"), str(args.env_file)]
+    validator = [
+        "python3", str(INFRA / "scripts/validate-env.py"), str(args.env_file),
+        "--profile", args.profile,
+    ]
     if not args.dry_run:
         validator.append("--require-root-owner")
     subprocess.run(validator, check=True)
@@ -127,9 +132,13 @@ def main() -> None:
         print("Validated migration ordering and generated a locked migration program.")
         return
 
-    subprocess.run([
+    compose = [
         "docker", "compose", "--project-name", environment["AA_STACK_ID"],
         "--env-file", str(args.env_file), "-f", str(compose_file),
+    ]
+    if args.profile == "single-stack":
+        compose.extend(["-f", str(SINGLE_STACK_COMPOSE)])
+    subprocess.run([*compose,
         "exec", "-T", "db", "psql", "-U", "postgres", "-d", "postgres",
     ], input="\n".join(sql) + "\n", text=True, check=True)
 

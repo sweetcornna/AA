@@ -12,7 +12,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument("environment", choices=TARGETS)
 parser.add_argument("template", type=Path)
 parser.add_argument("output", type=Path)
+parser.add_argument("--profile", choices=("dual-stack", "single-stack"), default="dual-stack")
 args = parser.parse_args()
+if args.profile == "single-stack" and args.environment != "production":
+    raise SystemExit("single-stack profile only permits a production Nginx target")
 if args.output.exists():
     raise SystemExit("refusing to overwrite an existing Nginx configuration")
 values = TARGETS[args.environment]
@@ -27,4 +30,4 @@ if re.search(r"\$\{AA_[A-Z0-9_]+\}", text):
     raise SystemExit("unresolved AA template variables remain")
 args.output.parent.mkdir(parents=True, exist_ok=True)
 args.output.write_text(text)
-print(f"Rendered {args.environment} loopback TLS virtual host.")
+print(f"Rendered {args.environment} loopback TLS virtual host for {args.profile}.")
