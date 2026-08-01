@@ -34,7 +34,15 @@ function writeTargets(overrides = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), "aa-hosted-targets-"));
   temporaryDirectories.push(directory);
   const file = path.join(directory, "targets.json");
-  writeFileSync(file, JSON.stringify({ schemaVersion: 2, staging, production, ...overrides }));
+  writeFileSync(file, JSON.stringify({ schemaVersion: 3, deploymentMode: "dual-stack", staging, production, ...overrides }));
+  return file;
+}
+
+function writeSingleStackTargets(overrides = {}) {
+  const directory = mkdtempSync(path.join(tmpdir(), "aa-hosted-targets-"));
+  temporaryDirectories.push(directory);
+  const file = path.join(directory, "targets.json");
+  writeFileSync(file, JSON.stringify({ schemaVersion: 3, deploymentMode: "single-stack", production, ...overrides }));
   return file;
 }
 
@@ -71,6 +79,12 @@ test("validates the exact approved staging target", () => {
   assert.deepEqual(JSON.parse(result.stdout), { environment: "staging", ...staging });
 });
 
+test("keeps schema version 2 as the default dual-stack contract", () => {
+  const result = run(["deployment-mode"], writeTargets({ schemaVersion: 2, deploymentMode: undefined }));
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "dual-stack");
+});
+
 test("prints only approved origins and stack ids", () => {
   const origin = run(["api-origin", "production"]);
   assert.equal(origin.status, 0, origin.stderr);
@@ -78,6 +92,27 @@ test("prints only approved origins and stack ids", () => {
   const stack = run(["stack-id", "staging"]);
   assert.equal(stack.status, 0, stack.stderr);
   assert.equal(stack.stdout.trim(), staging.stackId);
+});
+
+test("supports an explicit production-only single-stack target", () => {
+  const targets = writeSingleStackTargets();
+  const mode = run(["deployment-mode"], targets);
+  assert.equal(mode.status, 0, mode.stderr);
+  assert.equal(mode.stdout.trim(), "single-stack");
+
+  const productionResult = run(["validate-target", "production"], targets);
+  assert.equal(productionResult.status, 0, productionResult.stderr);
+  assert.deepEqual(JSON.parse(productionResult.stdout), { environment: "production", ...production });
+
+  const stagingResult = run(["validate-target", "staging"], targets);
+  assert.notEqual(stagingResult.status, 0);
+  assert.match(stagingResult.stderr, /staging target is unavailable in single-stack mode/);
+});
+
+test("single-stack targets reject a hidden staging definition", () => {
+  const result = run(["validate-target", "production"], writeSingleStackTargets({ staging }));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /must not define staging/);
 });
 
 test("rejects production relabeled as staging", () => {
@@ -132,6 +167,15 @@ test("rejects a missing approved target file", () => {
   const result = run(["validate-target", "staging"], "/definitely/missing/targets.json");
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /could not read approved hosted targets/);
+});
+
+test("rejects missing or unknown deployment modes", () => {
+  for (const deploymentMode of [undefined, "capacity-bypass"]) {
+    const overrides = deploymentMode === undefined ? { deploymentMode: undefined } : { deploymentMode };
+    const result = run(["validate-target", "production"], writeTargets(overrides));
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /deploymentMode must be dual-stack or single-stack/);
+  }
 });
 
 test("production canary rejects a non-production origin before network access", () => {

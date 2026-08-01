@@ -1,0 +1,30 @@
+services:
+  db:
+    # The restore-only database runs only while production is stopped. Match the
+    # production database cap and low-memory PostgreSQL settings so the drill is
+    # viable on the approved single-stack host without weakening isolation.
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - log_min_messages=warning
+      - -c
+      - log_statement=none
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - effective_cache_size=128MB
+      - -c
+      - max_connections=30
+      - -c
+      - work_mem=512kB
+      - -c
+      - maintenance_work_mem=16MB
+      - -c
+      - autovacuum_work_mem=8MB
+      - -c
+      - jit=off
+    shm_size: 64mb
+    mem_limit: 256m
+    cpus: 0.65

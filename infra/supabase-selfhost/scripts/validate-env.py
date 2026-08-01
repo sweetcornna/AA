@@ -62,6 +62,7 @@ def validate_jwt(token: str, secret: str, role: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("env_file", type=Path)
+    parser.add_argument("--profile", choices=("dual-stack", "single-stack"), default="dual-stack")
     parser.add_argument("--require-root-owner", action="store_true")
     args = parser.parse_args()
 
@@ -83,6 +84,8 @@ def main() -> None:
     environment = values["AA_ENVIRONMENT"]
     if environment not in TARGETS:
         raise SystemExit("AA_ENVIRONMENT must be staging or production")
+    if args.profile == "single-stack" and environment != "production":
+        raise SystemExit("single-stack profile only permits a production environment")
     stack, origin, port, root = TARGETS[environment]
     expected = {
         "AA_STACK_ID": stack,
@@ -126,7 +129,7 @@ def main() -> None:
         parsed = urlparse(values[key])
         if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port:
             raise SystemExit(f"{key} is not a canonical HTTPS URL")
-    print(f"Validated secret-safe {environment} environment contract.")
+    print(f"Validated secret-safe {environment} environment contract for {args.profile}.")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ const DEFAULT_TARGETS_FILE = path.join(ROOT_DIR, "supabase", "hosted-targets.jso
 const EXPECTED_REGION = "japaneast";
 const EXPECTED_DEPLOYMENT_TYPE = "self-hosted";
 const EXPECTED_SERVER_ID = "azure-aa-40-115-207-13";
+const DEPLOYMENT_MODES = new Set(["dual-stack", "single-stack"]);
 const EXPECTED_ORIGINS = {
   staging: "https://staging-api.cornna.xyz",
   production: "https://api.cornna.xyz",
@@ -39,6 +40,7 @@ function usage() {
   node scripts/hosted-deployment.mjs validate-target <staging|production>
   node scripts/hosted-deployment.mjs api-origin <staging|production>
   node scripts/hosted-deployment.mjs stack-id <staging|production>
+  node scripts/hosted-deployment.mjs deployment-mode
   node scripts/hosted-deployment.mjs fingerprint`);
 }
 
@@ -102,21 +104,42 @@ export function readApprovedTargets(filePath = targetsFilePath()) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`could not read approved hosted targets from ${filePath}: ${detail}`);
   }
-  if (parsed.schemaVersion !== 2) throw new Error("hosted targets schemaVersion must be 2");
+  let deploymentMode;
+  if (parsed.schemaVersion === 2) {
+    deploymentMode = "dual-stack";
+  } else if (parsed.schemaVersion === 3) {
+    if (!DEPLOYMENT_MODES.has(parsed.deploymentMode)) {
+      throw new Error("hosted targets deploymentMode must be dual-stack or single-stack");
+    }
+    deploymentMode = parsed.deploymentMode;
+  } else {
+    throw new Error("hosted targets schemaVersion must be 2 or 3");
+  }
+
+  const production = validateHostedTarget(parsed.production, "production");
+  if (deploymentMode === "single-stack") {
+    if (Object.hasOwn(parsed, "staging")) {
+      throw new Error("single-stack hosted targets must not define staging");
+    }
+    return { deploymentMode, production };
+  }
 
   const staging = validateHostedTarget(parsed.staging, "staging");
-  const production = validateHostedTarget(parsed.production, "production");
   if (staging.stackId === production.stackId || staging.apiOrigin === production.apiOrigin) {
     throw new Error("staging and production targets must be different");
   }
-  return { staging, production };
+  return { deploymentMode, staging, production };
 }
 
 export function readApprovedTarget(environment, filePath = targetsFilePath()) {
   if (!new Set(["staging", "production"]).has(environment)) {
     throw new Error("environment must be staging or production");
   }
-  return readApprovedTargets(filePath)[environment];
+  const targets = readApprovedTargets(filePath);
+  if (!targets[environment]) {
+    throw new Error(`${environment} target is unavailable in ${targets.deploymentMode} mode`);
+  }
+  return targets[environment];
 }
 
 async function collectFiles(relativePath) {
@@ -175,6 +198,10 @@ async function main() {
   }
   if (command === "stack-id" && argument) {
     console.log(readApprovedTarget(argument).stackId);
+    return;
+  }
+  if (command === "deployment-mode" && !argument) {
+    console.log(readApprovedTargets().deploymentMode);
     return;
   }
   if (command === "fingerprint" && !argument) {

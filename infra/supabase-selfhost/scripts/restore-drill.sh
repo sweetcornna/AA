@@ -2,22 +2,48 @@
 set -euo pipefail
 umask 077
 
-ENV_FILE="${1:?Usage: restore-drill.sh <restore-env-file> <backup.age> <backup.age.sha256> <age-identity> <staging-env> <production-env>}"
-BACKUP="${2:?Encrypted backup is required}"
-CHECKSUM="${3:?Backup checksum is required}"
-IDENTITY="${4:?Age identity is required}"
-STAGING_ENV="${5:?Validated staging environment is required}"
-PRODUCTION_ENV="${6:?Validated production environment is required}"
+usage() {
+  printf '%s\n' 'Usage: restore-drill.sh [--profile dual-stack|single-stack] <restore-env-file> <backup.age> <backup.age.sha256> <age-identity> <staging-env> <production-env>' >&2
+  printf '%s\n' '       restore-drill.sh --profile single-stack <restore-env-file> <backup.age> <backup.age.sha256> <age-identity> <production-env>' >&2
+  exit 2
+}
+
+PROFILE=dual-stack
+if [[ "${1:-}" == "--profile" ]]; then
+  [[ "$#" -ge 2 ]] || usage
+  PROFILE="$2"
+  shift 2
+fi
+case "$PROFILE" in
+  dual-stack|single-stack) ;;
+  *) printf 'Unknown deployment profile: %s.\n' "$PROFILE" >&2; usage ;;
+esac
+
+[[ "$#" -ge 4 ]] || usage
+ENV_FILE="$1"
+BACKUP="$2"
+CHECKSUM="$3"
+IDENTITY="$4"
+shift 4
+DEPLOYMENT_ENVS=("$@")
+if [[ "$PROFILE" == "dual-stack" ]]; then
+  [[ "${#DEPLOYMENT_ENVS[@]}" -eq 2 ]] || usage
+else
+  [[ "${#DEPLOYMENT_ENVS[@]}" -eq 1 ]] || usage
+fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 INFRA_DIR="$ROOT_DIR/infra/supabase-selfhost"
 COMPOSE_FILE="$INFRA_DIR/compose.restore.yml"
+SINGLE_STACK_COMPOSE_FILE="$INFRA_DIR/compose.restore.single-stack.yml"
 VALIDATOR="$INFRA_DIR/scripts/validate-restore-env.py"
 MIGRATIONS_DIR="$ROOT_DIR/supabase/migrations"
 
-python3 "$INFRA_DIR/scripts/validate-env.py" "$STAGING_ENV" --require-root-owner
-python3 "$INFRA_DIR/scripts/validate-env.py" "$PRODUCTION_ENV" --require-root-owner
-python3 "$VALIDATOR" "$ENV_FILE" --require-root-owner \
-  --disjoint-from "$STAGING_ENV" --disjoint-from "$PRODUCTION_ENV"
+restore_validation=(python3 "$VALIDATOR" "$ENV_FILE" --profile "$PROFILE" --require-root-owner)
+for deployment_env in "${DEPLOYMENT_ENVS[@]}"; do
+  python3 "$INFRA_DIR/scripts/validate-env.py" "$deployment_env" --profile "$PROFILE" --require-root-owner
+  restore_validation+=(--disjoint-from "$deployment_env")
+done
+"${restore_validation[@]}"
 # shellcheck disable=SC1091
 source "$INFRA_DIR/scripts/env-utils.sh"
 aa_load_env "$ENV_FILE"
@@ -25,6 +51,7 @@ aa_load_env "$ENV_FILE"
 for command in age docker flock python3 sha256sum; do
   command -v "$command" >/dev/null || { printf '%s is required.\n' "$command" >&2; exit 1; }
 done
+
 python3 - "$BACKUP" "$CHECKSUM" "$IDENTITY" <<'PY'
 import os
 import stat
@@ -40,6 +67,10 @@ for value, label in zip(sys.argv[1:], ("backup", "checksum", "age identity")):
 PY
 backup_name="$(basename "$BACKUP")"
 [[ "$backup_name" =~ ^aa-(staging|production)-[0-9]{8}T[0-9]{6}Z\.dump\.age$ ]] || { printf 'Backup filename is invalid.\n' >&2; exit 1; }
+if [[ "$PROFILE" == "single-stack" && ! "$backup_name" =~ ^aa-production- ]]; then
+  printf 'Single-stack restore drills only accept production backups.\n' >&2
+  exit 1
+fi
 [[ "$(basename "$CHECKSUM")" == "$backup_name.sha256" ]] || { printf 'Checksum filename does not match backup.\n' >&2; exit 1; }
 expected_hash="$(python3 - "$CHECKSUM" "$backup_name" <<'PY'
 import re
@@ -55,6 +86,32 @@ PY
 actual_hash="$(sha256sum -- "$BACKUP" | cut -d ' ' -f 1)"
 [[ "$actual_hash" == "$expected_hash" ]] || { printf 'Backup checksum verification failed.\n' >&2; exit 1; }
 
+# Capacity is checked before any Docker query, then again against Docker's data
+# filesystem. The restore stack remains a separate project and volume set.
+"$INFRA_DIR/scripts/capacity-check.sh" --profile "$PROFILE" /srv/aa
+docker_root="$(docker info --format '{{.DockerRootDir}}')"
+[[ -n "$docker_root" && "$docker_root" == /* ]] || { printf 'Docker data root is invalid.\n' >&2; exit 1; }
+"$INFRA_DIR/scripts/capacity-check.sh" --profile "$PROFILE" /srv/aa "$docker_root"
+
+if [[ "$PROFILE" == "single-stack" ]]; then
+  production_stack_id="$(python3 - "${DEPLOYMENT_ENVS[0]}" <<'PY'
+import sys
+from pathlib import Path
+
+values = dict(
+    line.split("=", 1)
+    for line in Path(sys.argv[1]).read_text().splitlines()
+    if line and not line.startswith("#")
+)
+print(values["AA_STACK_ID"])
+PY
+)"
+  if [[ -n "$(docker ps --quiet --filter "label=com.docker.compose.project=$production_stack_id")" ]]; then
+    printf 'Production must be stopped before a single-stack restore drill to avoid host OOM.\n' >&2
+    exit 1
+  fi
+fi
+
 lock_file="/run/lock/${AA_STACK_ID}.lock"
 exec 9>"$lock_file"
 flock --nonblock 9 || { printf 'Another process is using this restore stack identity.\n' >&2; exit 1; }
@@ -67,6 +124,9 @@ if [[ -n "$(docker ps --all --quiet --filter "$project_filter")" ||
 fi
 
 compose=(docker compose --project-name "$AA_STACK_ID" --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+if [[ "$PROFILE" == "single-stack" ]]; then
+  compose+=(-f "$SINGLE_STACK_COMPOSE_FILE")
+fi
 cleanup_required=false
 print_cleanup() {
   if [[ "$cleanup_required" == true ]]; then

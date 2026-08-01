@@ -34,6 +34,7 @@ def parse(path: Path) -> dict[str, str]:
 
 parser = argparse.ArgumentParser()
 parser.add_argument("env_file", type=Path)
+parser.add_argument("--profile", choices=("dual-stack", "single-stack"), default="dual-stack")
 parser.add_argument("--require-root-owner", action="store_true")
 parser.add_argument("--disjoint-from", action="append", type=Path, default=[])
 args = parser.parse_args()
@@ -54,19 +55,20 @@ if not all(re.fullmatch(r"[A-Za-z0-9._-]+", values[key]) for key in ("POSTGRES_P
 if values["POSTGRES_PASSWORD"] == values["JWT_SECRET"]:
     raise SystemExit("restore secrets must be distinct")
 
+expected_environments = {"production"} if args.profile == "single-stack" else {"staging", "production"}
 seen_environments = set()
 for comparison in args.disjoint_from:
     validate_file(comparison, args.require_root_owner, "comparison environment")
     deployed = parse(comparison)
     environment = deployed.get("AA_ENVIRONMENT")
-    if environment not in {"staging", "production"}:
-        raise SystemExit("comparison environment must be staging or production")
+    if environment not in expected_environments:
+        raise SystemExit(f"comparison environment is not permitted for {args.profile}")
     if environment in seen_environments:
         raise SystemExit(f"duplicate comparison environment: {environment}")
     seen_environments.add(environment)
     for key in ("AA_STACK_ID", "POSTGRES_PASSWORD", "JWT_SECRET"):
         if values[key] == deployed.get(key):
             raise SystemExit(f"restore environment reuses {key} from {environment}")
-if args.disjoint_from and seen_environments != {"staging", "production"}:
-    raise SystemExit("restore environment must be compared with staging and production")
-print(f"Validated isolated restore environment {values['AA_STACK_ID']}.")
+if args.disjoint_from and seen_environments != expected_environments:
+    raise SystemExit(f"restore environment comparisons do not match {args.profile}")
+print(f"Validated isolated restore environment {values['AA_STACK_ID']} for {args.profile}.")

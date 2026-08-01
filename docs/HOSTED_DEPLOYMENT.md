@@ -1,17 +1,22 @@
 # Azure 自托管 Supabase 部署手册
 
-AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不能只部署 PostgreSQL。本手册规定在 Azure VM `40.115.207.13` 上运行两个完整隔离栈：
+AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不能只部署 PostgreSQL。本仓库保留以下两种模式：
+
+- `dual-stack`：默认合同，在合规容量主机上运行 staging 与 production 两个完整隔离栈；
+- `single-stack`：必须逐命令显式传入 `--profile single-stack`，只允许运行 production。
 
 | 环境 | Stack ID | 公共 API | Loopback Kong | 数据根目录 |
 | --- | --- | --- | --- | --- |
 | staging | `aa-staging-primary` | `https://staging-api.cornna.xyz` | `127.0.0.1:18100` | `/srv/aa/staging` |
 | production | `aa-production-primary` | `https://api.cornna.xyz` | `127.0.0.1:18101` | `/srv/aa/production` |
 
+当前 Standard_B2ats_v2（2 vCPU、`MemTotal` 约 914 MiB、4 GiB swap、Debian 11）使用 `single-stack` 是 operator 明确批准的 deliberate deviation。它不改变也不降低默认 `dual-stack` 合同。
+
 本文和仓库脚本不会授权服务器、DNS 或 GitHub mutation。每次外部变更仍需明确批准。
 
 ## 硬性 stop gates
 
-当前 VM 只有 2 vCPU、约 1 GiB RAM，禁止部署。开始 staging 前必须全部满足：
+默认 `dual-stack` 只有全部满足下列条件才可启动：
 
 - [ ] 主机已迁移/重建到仍受安全支持的 Debian 13（最低 Debian 12）；当前 Debian 11 的 LTS 于 2026-08-31 结束，且存在 `reboot-required`，不得作为新增长期 production 的基线；
 - [ ] VM 已扩容到至少 4 vCPU，且 Linux 实测 `MemTotal >= 8,388,608 KiB`；双栈与既有服务建议 16 GiB；swap 不计入物理内存门；
@@ -24,7 +29,20 @@ AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不�
 - [ ] 已加密备份并恢复验证双 SSH key、Nginx/SNI、Xray unit/drop-in/config、WARP、Fail2ban、`/opt/light-panel/*` Docker bind data 与 certbot 账号/证书/续期配置，并记录回滚命令；
 - [ ] source commit clean，CI、基础设施测试和独立验证通过。
 
-低于任一 gate 时只允许本地仓库验证，不得起远端容器、改 DNS、签证书或发布 APK。
+明确批准的 `single-stack` 使用独立且仍然 fail-closed 的 stop gates：
+
+- [ ] 每条相关命令显式使用 `--profile single-stack`；漏写时回到默认 `dual-stack`，不会自动降级；
+- [ ] target manifest 为 `deploymentMode=single-stack`，只定义 production；env、migration 和 Nginx target 都必须是 production；
+- [ ] Debian `VERSION_ID >= 11`、在线 CPU `>= 2`、物理 `MemTotal >= 917,504 KiB`（896 MiB）；4 GiB swap 和 `MemAvailable` 都不计入该硬门；
+- [ ] `/srv/aa` 与 Docker `DockerRootDir` 所在 filesystem 分别至少有 `20,971,520 KiB`（20 GiB）free；即使两者是同一 filesystem 也必须完成两次路径检查；
+- [ ] 上游 manifest、locked commit、function/template artifact 与 `AA_SOURCE_FINGERPRINT` 全部验证通过；
+- [ ] production env 仍满足所有 secret、JWT、URL、port、backup 与 provider 校验；
+- [ ] restore drill 仍使用随机 restore-only project/network/volumes，并且 drill 前 production 必须停止；
+- [ ] source clean，全部仓库验证、encrypted backup、restore drill、production non-destructive canary 和恢复步骤均通过/演练。
+
+896 MiB floor 的来源不是目标 VM 的现有数值：七个服务的明确上限合计 688 MiB（PostgreSQL 256、template 16、GoTrue 64、PostgREST 32、Realtime 96、Edge Runtime 144、Kong 80），再加现有 Xray/beszel/beszel-agent/uptime-kuma 约 130 MiB 和 Debian kernel/host daemon 78 MiB。`AA_MIN_CPUS`、`AA_MIN_MEMORY_KIB`、`AA_MIN_DISK_KIB` 只能提高当前 profile 的门，不能降低。
+
+operator 同时明确接受：没有 staging validation；所有变更直接进入 production；PostgreSQL 在压力下可能触及 swap；914 MiB 主机仍有 host OOM 或单容器 OOM 风险；Xray、beszel、beszel-agent 和 uptime-kuma 与 production 共享 CPU、RAM、swap 和磁盘。低于任一所选 profile gate 时只允许本地仓库验证，不得起远端容器、改 DNS、签证书或发布 APK。
 
 ## 架构与暴露面
 
@@ -81,26 +99,26 @@ node scripts/hosted-deployment.mjs fingerprint > deployment-fingerprint.json
 
 ## 目标身份
 
-复制 ignored target manifest，然后核对固定 server、region、stack 和 API origin：
+复制 ignored target manifest，然后核对显式模式、固定 server、region、stack 和 API origin。仓库 example 是 production-only opt-in：
 
 ```bash
 cp supabase/hosted-targets.example.json supabase/hosted-targets.json
-node scripts/hosted-deployment.mjs validate-target staging
+node scripts/hosted-deployment.mjs deployment-mode
 node scripts/hosted-deployment.mjs validate-target production
 ```
 
-staging destructive suite 只接受 manifest 中的 staging origin；production origin 会 fail closed。
+新建的 schema v3 dual-stack manifest 必须显式写 `deploymentMode=dual-stack` 并同时提供 staging/production；已有 schema v2 manifest 继续按默认 dual-stack 合同读取。single-stack manifest 若偷偷包含 staging 会 fail closed。staging destructive suite 在 single-stack mode 不存在，也绝不能改为指向 production。
 
 ## Runtime artifact
 
-在每个环境的数据根目录准备相同的 verified upstream 和 function artifact：
+single-stack 只在 production 根目录准备 verified upstream 和 function artifact：
 
 ```bash
-sudo infra/supabase-selfhost/scripts/prepare-upstream.sh /srv/aa/staging/runtime
-sudo infra/supabase-selfhost/scripts/build-functions.sh /srv/aa/staging/runtime
+sudo infra/supabase-selfhost/scripts/prepare-upstream.sh /srv/aa/production/runtime
+sudo infra/supabase-selfhost/scripts/build-functions.sh /srv/aa/production/runtime
 ```
 
-production promotion 时对 `/srv/aa/production/runtime` 重复。`build-functions.sh`：
+dual-stack 则分别为 staging 和 production 准备相同 fingerprint。`build-functions.sh`：
 
 1. 读取 fixed upstream router；
 2. 用固定 lock 对三个 AA function 和 router 执行 Deno bundle；
@@ -108,33 +126,33 @@ production promotion 时对 `/srv/aa/production/runtime` 重复。`build-functio
 4. 将函数和 OTP template 设为只读；
 5. production Compose 只读挂载 artifact，不挂载 Git 工作区。
 
-`prepare-upstream.sh` 为保留的 upstream 文件生成包含 path/type/mode/SHA-256 的严格 manifest；`build-functions.sh` 在 bundle 前、`compose.sh` 在任何 Compose 操作前都会重新校验完整 upstream manifest。`compose.sh` 同时按 `AA_SOURCE_FINGERPRINT` 和 locked upstream commit 重新校验 function/template artifact。两个环境部署的 fingerprint 必须与 staging 已验收值完全相同。
+`prepare-upstream.sh` 为保留的 upstream 文件生成包含 path/type/mode/SHA-256 的严格 manifest；`build-functions.sh` 在 bundle 前、`compose.sh` 在任何 Compose 操作前都会重新校验完整 upstream manifest。`compose.sh` 同时按 `AA_SOURCE_FINGERPRINT` 和 locked upstream commit 重新校验 function/template artifact。dual-stack 两个环境的 fingerprint 必须相同；single-stack 仍必须与本次批准的 source fingerprint 完全相同。
 
 ## Secret-safe env
 
-先由 operator 在受限 secret manager 中创建两个独立 `0600` JSON 文件，每个只含 `SMTP_PASS` 和 `OPENAI_API_KEY`。不要把值放进 shell argv、history、日志或 evidence。然后生成 server env：
+single-stack 由 operator 在受限 secret manager 中创建一个 production `0600` JSON 文件，只含 `SMTP_PASS` 和 `OPENAI_API_KEY`。不要把值放进 shell argv、history、日志或 evidence。然后生成 server env：
 
 ```bash
 sudo python3 infra/supabase-selfhost/scripts/generate-env.py \
-  staging /srv/aa/staging/stack.env \
+  production /srv/aa/production/stack.env \
+  --profile single-stack \
   --fingerprint <64-HEX-SOURCE-FINGERPRINT> \
-  --smtp-admin-email <VERIFIED-STAGING-SENDER> \
-  --provider-secrets <ROOT-ONLY-STAGING-PROVIDER-JSON> \
+  --smtp-admin-email <VERIFIED-PRODUCTION-SENDER> \
+  --provider-secrets <ROOT-ONLY-PRODUCTION-PROVIDER-JSON> \
   --backup-recipient <AGE-PUBLIC-RECIPIENT> \
   --azure-storage-account <STORAGE-ACCOUNT> \
-  --azure-storage-container <STAGING-CONTAINER>
+  --azure-storage-container <PRODUCTION-CONTAINER>
 ```
 
-production 使用独立 provider file、sender 和 Blob container。校验：
+校验：
 
 ```bash
 sudo python3 infra/supabase-selfhost/scripts/validate-env.py \
-  /srv/aa/staging/stack.env --require-root-owner
-sudo python3 infra/supabase-selfhost/scripts/validate-env.py \
-  /srv/aa/production/stack.env --require-root-owner
-sudo python3 infra/supabase-selfhost/scripts/validate-pair.py \
-  /srv/aa/staging/stack.env /srv/aa/production/stack.env
+  /srv/aa/production/stack.env \
+  --profile single-stack --require-root-owner
 ```
+
+single-stack 不调用 `validate-pair.py`，因为没有 pair。该跳过明确表示 staging/production identity、data、port、provider 和 secret isolation proof **没有执行**；脚本没有被删除或放宽，切回 dual-stack 时仍必须对两个 env 运行它。
 
 env 文件必须 root-owned `0600`，不得提交或上传。APK 只获得 production origin 和 anon/public key；service-role、JWT、SMTP 和 OpenAI 永不进入 `VITE_*`。
 
@@ -142,7 +160,7 @@ env 文件必须 root-owned `0600`，不得提交或上传。APK 只获得 produ
 
 ## 容量与启动
 
-扩容后先只读核对 CPU、物理内存、swap、`/srv/aa`、Docker data root 和各自 filesystem：
+先只读核对 CPU、物理内存、swap、`/srv/aa`、Docker data root 和各自 filesystem：
 
 ```bash
 nproc
@@ -151,10 +169,11 @@ swapon --show
 sudo docker info --format '{{.DockerRootDir}}'
 df -Pk /srv/aa "$(sudo docker info --format '{{.DockerRootDir}}')"
 sudo infra/supabase-selfhost/scripts/capacity-check.sh \
+  --profile single-stack \
   /srv/aa "$(sudo docker info --format '{{.DockerRootDir}}')"
 ```
 
-只有两个 filesystem 在 swap 扩容后仍分别保有至少 40 GiB free disk，才可用 root-owned `0600` regular file 条件增加 swap，并确保 `/etc/fstab` 只有唯一持久项。swap 只能缓解峰值压力，永远不能替代 `MemTotal` 门。`AA_MIN_CPUS`、`AA_MIN_MEMORY_KIB`、`AA_MIN_DISK_KIB` 只能提高门槛，不能低于批准的 4 CPU、8,388,608 KiB 物理内存和 40 GiB free disk；`compose.sh` 在所有 Compose 操作前会再次执行相同硬门。
+single-stack 的 exact floor 是 2 CPU、917,504 KiB physical RAM、两个路径各 20,971,520 KiB free、Debian 11；dual-stack 保持 4 CPU、8,388,608 KiB、两个路径各 41,943,040 KiB free、Debian 12。swap 只能缓解峰值压力，永远不能替代 `MemTotal` 门。`compose.sh` 在读取 DockerRootDir 前先 gate `/srv/aa`，之后再对 `/srv/aa` 和 DockerRootDir 执行同一 profile 的完整 gate。
 
 确认现有监听、容器和磁盘；不要把外部端口扫描直接解释为 VM listener：
 
@@ -164,13 +183,13 @@ sudo docker ps --format '{{.Names}} {{.Ports}}'
 sudo nft list ruleset
 ```
 
-启动 staging 前必须再次批准本次 mutation：
+启动 production 前必须再次批准本次 mutation：
 
 ```bash
 sudo infra/supabase-selfhost/scripts/compose.sh \
-  /srv/aa/staging/stack.env pull
+  --profile single-stack /srv/aa/production/stack.env pull
 sudo infra/supabase-selfhost/scripts/compose.sh \
-  /srv/aa/staging/stack.env up -d
+  --profile single-stack /srv/aa/production/stack.env up -d
 ```
 
 对 staging/production 不得使用 `docker compose down -v`、删 volume 或跨环境复用 env。唯一例外是下文经过随机 project/env 校验的 restore-only 精确清理命令。
@@ -187,8 +206,9 @@ sudo infra/supabase-selfhost/scripts/compose.sh \
 
 ```bash
 sudo python3 infra/supabase-selfhost/scripts/run-migrations.py \
-  --expected-environment staging \
-  --env-file /srv/aa/staging/stack.env \
+  --profile single-stack \
+  --expected-environment production \
+  --env-file /srv/aa/production/stack.env \
   --compose-file "$PWD/infra/supabase-selfhost/compose.base.yml" \
   --migrations "$PWD/supabase/migrations"
 ```
@@ -203,7 +223,7 @@ sudo python3 infra/supabase-selfhost/scripts/run-migrations.py \
 - existing-user-only 6 位 email OTP；有效期 600 秒，重发间隔 60 秒；
 - phone、anonymous、OAuth、TOTP/phone MFA disabled；
 - OTP HTML 从内部 template container 读取，不对公网暴露；
-- Resend SMTP；staging/production sender 和 credential 分开；
+- Resend SMTP；dual-stack 的 staging/production sender 和 credential 分开；single-stack 只保留 production credential；
 - OpenAI `gpt-4o-transcribe`；key 只在 Edge Runtime；
 - Edge gateway `VERIFY_JWT=true`，handler 继续调用 `auth.getUser()`；
 - ASR 8 MiB/60 秒、quota 和 55 秒 proxy timeout 继续执行；
@@ -218,71 +238,53 @@ sudo python3 infra/supabase-selfhost/scripts/run-migrations.py \
 - `templates/nginx/aa-api.conf.template`
 - `templates/nginx/site-stream-map.conf.example`
 
-分别渲染到临时文件：
+single-stack 只渲染 production：
 
 ```bash
 python3 infra/supabase-selfhost/scripts/render-nginx.py \
-  staging infra/supabase-selfhost/templates/nginx/aa-api.conf.template \
-  /tmp/aa-staging-api.conf
+  production infra/supabase-selfhost/templates/nginx/aa-api.conf.template \
+  /tmp/aa-production-api.conf \
+  --profile single-stack
 ```
 
-production 同理。执行顺序：
+执行顺序：
 
 1. Cloudflare 创建 DNS-only A records 指向 `40.115.207.13`；token 只通过受保护 input；
 2. 验证 authoritative DNS；
-3. 使用 DNS-01 或与现有 80/443 路由兼容的 webroot 签发两个独立证书；
+3. 使用 DNS-01 或与现有 80/443 路由兼容的 webroot 签发 production 证书；dual-stack 才签发第二个 staging 证书；
 4. 备份 Nginx config 与 `/etc/sota-vless-hy/site-stream-map.conf`；
 5. 安装 loopback TLS vhost；
-6. 在 stream map 加 exact SNI → `127.0.0.1:18543/18544`；
+6. single-stack 只增加 `api.cornna.xyz` exact SNI → `127.0.0.1:18544`；dual-stack 另加 staging → `127.0.0.1:18543`；
 7. `nginx -t` 成功后 reload；失败立刻恢复备份；
-8. 验证 `panel4.cornna.xyz`、`cfv4.cornna.xyz`、Xray 和新增两个 API host；
+8. 验证 `panel4.cornna.xyz`、`cfv4.cornna.xyz`、Xray 和新增 production API host；
 9. 演练自动续期。
 
 HTTPS gate：可信证书、TLS 1.2+、正确 SNI、HSTS、WebSocket upgrade、ASR 9 MiB transport envelope/55 秒、Kong CORS allowlist 和无内部端口暴露。
 
-## Health 与 staging acceptance
+## Health 与 single-stack acceptance
 
 ```bash
 sudo infra/supabase-selfhost/scripts/health-check.sh \
-  /srv/aa/staging/stack.env
+  /srv/aa/production/stack.env
 ```
 
-staging 必须验证：
+single-stack 没有 staging，因此不具备以下原 dual-stack 证明：先在隔离 staging 执行 Auth/OTP edge cases、REST/RPC/RLS、Realtime、functions、provider error/timeout、log privacy 和 destructive cleanup，再以相同 fingerprint promotion。这个缺口是 operator 明确接受的风险，不得把 production 当成 staging，也不得对 production 运行 `verify-backend.mjs`、service-role/admin fixture 或 destructive suite。
 
-- Auth password、6 位 OTP 发送/过期/重发/错误/单次使用/限流；
-- REST/RPC/RLS、Realtime、三个 function；
-- invalid/missing/expired JWT；
-- ASR quota、8 MiB、timeout、provider error 与一次真实小额调用；
-- log privacy；
-- `verify-backend.mjs` destructive suite 的 exact cleanup 和零残留。
-
-protected runner 通过 env 注入 staging public/service key：
-
-```bash
-AA_BACKEND_TEST_MODE=staging \
-AA_SUPABASE_URL=https://staging-api.cornna.xyz \
-AA_SUPABASE_PUBLIC_KEY=<RUNTIME-PUBLIC-KEY> \
-AA_SUPABASE_SERVICE_ROLE_KEY=<RUNTIME-SECRET> \
-node scripts/verify-backend.mjs
-```
-
-禁止对 production 执行该 suite，也禁止把 service-role 放进命令历史或证据。实际 operator 应由 secret runner 注入上述 env。
+替代但不等价的 production gates 是：全部本地/CI contract tests、isolated restore drill、non-destructive ordinary-user production canary、health check、日志隐私抽查、备份 read-back、资源/OOM/Swap 告警。任何一项失败都停止变更并走 forward fix。
 
 ## Backup 与 restore drill
 
 第一版能力只声明每日 encrypted logical backup，默认 RPO 24h、RTO 4h；没有实施 PostgreSQL base backup/WAL archive 前不得声称 PITR。
 
-VM managed identity 需对两个独立 Blob container 有最小读写权限，用于上传后的 read-back 校验；先安装 `age`、`azcopy`。两个 container 必须在 Azure 侧分别配置已批准的 lifecycle retention、soft delete/versioning，并按组织要求启用 immutability；这些是外部配置 gate，不能由本仓库脚本或本地 30 天清理代替。先创建固定的 root-only 非 symlink 目录：
+VM managed identity 需对 production Blob container 有最小读写权限，用于上传后的 read-back 校验；先安装 `age`、`azcopy`。container 必须在 Azure 侧配置已批准的 lifecycle retention、soft delete/versioning，并按组织要求启用 immutability；这些是外部配置 gate，不能由本仓库脚本或本地 30 天清理代替。先创建固定的 root-only 非 symlink 目录：
 
 ```bash
-sudo install -d -o root -g root -m 0700 \
-  /srv/aa/backups/staging /srv/aa/backups/production
+sudo install -d -o root -g root -m 0700 /srv/aa/backups/production
 ```
 
-每天分别执行：
+每天执行：
 
 ```bash
-sudo infra/supabase-selfhost/scripts/backup.sh /srv/aa/staging/stack.env
 sudo infra/supabase-selfhost/scripts/backup.sh /srv/aa/production/stack.env
 ```
 
@@ -298,22 +300,24 @@ sudo python3 infra/supabase-selfhost/scripts/generate-restore-env.py \
   --drill-id <UNIQUE-6-TO-31-CHARACTER-ID>
 sudo python3 infra/supabase-selfhost/scripts/validate-restore-env.py \
   /srv/aa/restore/<DRILL-ID>.env \
+  --profile single-stack \
   --require-root-owner \
-  --disjoint-from /srv/aa/staging/stack.env \
   --disjoint-from /srv/aa/production/stack.env
 ```
 
-环境文件只包含 `AA_ENVIRONMENT=restore`、随机化 `aa-restore-*` stack ID、固定 restore-only upstream 路径，以及独立 PostgreSQL/JWT secrets。validator 要求常规非 symlink 文件、root owner、mode `0600` 或更严格，并在内存中证明 stack/database/JWT 与 staging、production 分离而不输出值或 secret digest。backup、checksum 和 age identity 同样必须是 root-owned、不可被 group/other 读取的非 symlink 常规文件。
+环境文件只包含 `AA_ENVIRONMENT=restore`、随机化 `aa-restore-*` stack ID、固定 restore-only upstream 路径，以及独立 PostgreSQL/JWT secrets。validator 要求常规非 symlink 文件、root owner、mode `0600` 或更严格，并在内存中证明 stack/database/JWT 与 production 分离而不输出值或 secret digest；dual-stack 仍要求同时与 staging、production 比较。backup、checksum 和 age identity 同样必须是 root-owned、不可被 group/other 读取的非 symlink 常规文件。
 
-先从 Blob 取回同名 `.dump.age` 与 `.dump.age.sha256`，再执行：
+先从 Blob 取回同名 production `.dump.age` 与 `.dump.age.sha256`；single-stack 会拒绝 staging 文件名。single-stack 无法安全并行容纳 production 与 restore database；先用非破坏性的 `stop` 停止 production，再执行 drill：
 
 ```bash
+sudo infra/supabase-selfhost/scripts/compose.sh \
+  --profile single-stack /srv/aa/production/stack.env stop
 sudo infra/supabase-selfhost/scripts/restore-drill.sh \
+  --profile single-stack \
   /srv/aa/restore/<DRILL-ID>.env \
   /srv/aa/restore/<BACKUP>.dump.age \
   /srv/aa/restore/<BACKUP>.dump.age.sha256 \
   /srv/aa/restore/<AGE-IDENTITY> \
-  /srv/aa/staging/stack.env \
   /srv/aa/production/stack.env
 ```
 
@@ -321,20 +325,26 @@ sudo infra/supabase-selfhost/scripts/restore-drill.sh \
 
 archive 会流式解密一次用于 `PGDMP`/TOC/owner-ACL metadata 检查，再流式解密到 fresh `aa_restore`，使用 `--single-transaction --exit-on-error`；主机不落明文 archive，也不清理 bootstrap `postgres`。随后在 advisory lock 下拒绝 unknown migration、changed hash 或 non-prefix ledger，以单文件事务只应用缺失 migration suffix；完成 roll-forward 后再硬校验完整 ledger、精确 RLS table/policy、RPC、Auth relations/database roles、owner/grant、validated constraints、Auth user/profile、expense split 与每圈余额零和；任一断言失败都会非零退出。
 
-成功或失败后都不会自动销毁栈。脚本从 project 创建前开始安装 EXIT 提示，输出带 exact `--project-name`、restore env 与 restore Compose 的 `down --volumes` 命令。先记录不含 secret/个人数据的 backup object/version identity、encrypted SHA-256、drill stack ID、source fingerprint、migration hashes、RPO/RTO 和断言结果，再单独执行该命令，并确认 staging/production volume 仍存在。`down --volumes` 只允许这个已验证的随机 `aa-restore-*` project；不得使用 production/staging env、`--remove-orphans`、prune、glob 或按 `docker volume ls` 批量删除。
+成功或失败后都不会自动销毁栈。脚本从 project 创建前开始安装 EXIT 提示，输出带 exact `--project-name`、restore env 与 restore Compose 的 `down --volumes` 命令。先记录不含 secret/个人数据的 backup object/version identity、encrypted SHA-256、drill stack ID、source fingerprint、migration hashes、RPO/RTO 和断言结果，再单独执行该命令，并确认 production volume 仍存在。`down --volumes` 只允许这个已验证的随机 `aa-restore-*` project；不得使用 production/staging env、`--remove-orphans`、prune、glob 或按 `docker volume ls` 批量删除。
 
-该 database-only drill 验证数据库可恢复性，不验证 GoTrue、PostgREST、Realtime、Edge Functions、SMTP/provider、Nginx、DNS/TLS 或 public routing 启动；这些仍由 staging acceptance 和 production non-destructive canary 单独覆盖。
+该 database-only drill 验证数据库可恢复性，不验证 GoTrue、PostgREST、Realtime、Edge Functions、SMTP/provider、Nginx、DNS/TLS 或 public routing 启动；single-stack 没有 staging 覆盖，只能在清理 restore project 后用 wrapper 重启 production，运行 health check 和 production non-destructive canary。若 restore 清理、production 重启、health 或 canary 任一步失败，保持发布冻结，保留证据，恢复上一个 immutable function artifact 或从已验证 backup 启动 incident recovery；不要编辑历史 migration、reset、repair 或删除 production volume。
+
+## Single-stack recovery expectations
+
+该偏差的恢复目标仍是 encrypted logical backup 的默认 RPO 24h、RTO 4h，不是 PITR。operator 必须预期 restore drill 和真实 database recovery 都会造成 production downtime：先 `stop` production，确认没有该 project 的 running container，启动唯一的 restore-only database，记录 evidence 后精确清理 restore project，再用同一 `--profile single-stack` wrapper 重启 production。
+
+重启顺序固定为：capacity/artifact gate → `compose.sh --profile single-stack ... up -d` → `health-check.sh` → ordinary-user production canary → 监控 PostgreSQL、container OOM、host OOM、swap in/out、磁盘和 backup age。若 PostgreSQL 持续使用 swap、出现 OOM kill、health 不稳定或现有 Xray/beszel/uptime-kuma 被挤压，停止新 mutation 和高成本 function 请求；不得继续降低 memory floor/limit。优先回到上一个 immutable function artifact；数据库损坏时冻结写入并从最近一次已验证 backup 走 restore-only incident procedure。
 
 ## Production promotion
 
-只有以下全部签署后才可单独批准 production mutation：
+single-stack 只有以下全部签署后才可单独批准 production mutation：
 
-- staging 稳定、destructive suite cleanup 为零；
-- source commit、image digest、function artifact fingerprint 与 staging 相同；
+- operator 对本次无 staging 直接 production deviation 再次签署；
+- source commit、image digest、function artifact fingerprint 与批准 evidence 相同；
 - migration ledger/hash 完全匹配；
 - backup 新鲜、Blob copy 存在、isolated restore drill 通过；
 - DNS/TLS/SNI、监控、磁盘/内存、证书和备份年龄告警通过；
-- production secret/provider/sender 与 staging 分开；
+- production secret/provider/sender 只存在于受保护 production env；
 - credentials 已轮换；
 - privacy 必填项已补全。
 
@@ -370,8 +380,8 @@ production evidence 只记录：commit、bundle SHA-256、image digests、migrat
 
 禁止：
 
-- 在 undersized VM 部署；
-- staging 前部署 production；
+- 在未显式选择并批准 `single-stack` 时在 undersized VM 部署；
+- 在 dual-stack mode 下跳过 staging；single-stack 的无 staging 偏差不得被解释为已完成 isolation/acceptance proof；
 - 共享 volume、stack ID、port、JWT、provider、SMTP 或 backup container；
 - host bind PostgreSQL/Kong admin/内部服务；
 - `latest`、未固定镜像或未校验上游文件；

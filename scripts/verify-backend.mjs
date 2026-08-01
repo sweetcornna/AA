@@ -3,8 +3,8 @@
 // requires runtime credentials, and must be explicitly enabled.
 //
 // Local:  node scripts/verify-backend.mjs
-// Staging: copy supabase/hosted-targets.example.json to the ignored
-//          supabase/hosted-targets.json, verify the two approved targets, then run:
+// Staging: create an ignored schema-v3 dual-stack supabase/hosted-targets.json,
+//          verify the two approved targets, then run:
 //          AA_BACKEND_TEST_MODE=staging \
 //          AA_SUPABASE_URL=https://staging-api.cornna.xyz \
 //          AA_SUPABASE_PUBLIC_KEY=<public-key> \
@@ -32,7 +32,8 @@ function assertSafeTarget() {
     return;
   }
   if (MODE !== "staging") throw new Error("remote destructive tests require AA_BACKEND_TEST_MODE=staging");
-  const { staging, production } = readApprovedTargets();
+  const { deploymentMode, staging, production } = readApprovedTargets();
+  if (deploymentMode !== "dual-stack") throw new Error("remote destructive tests require an approved dual-stack target manifest");
   if (parsed.href !== `${staging.apiOrigin}/`) throw new Error("Supabase URL does not match the approved staging API origin");
   if (parsed.href === `${production.apiOrigin}/`) throw new Error("destructive tests must never target production");
   if (!ANON || !SERVICE) throw new Error("staging tests require public and service-role keys from the runtime environment");
