@@ -262,8 +262,12 @@ services:
       KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
       KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
       KONG_NGINX_HTTP_CLIENT_MAX_BODY_SIZE: 9m
+      # Access logs stay off so request URLs (which carry invitation tokens) are
+      # never written to disk. KONG_PROXY_ERROR_LOG takes a path only: appending a
+      # severity makes Kong emit a second log level into nginx.conf and the
+      # gateway fails to boot with `duplicate log level "notice"`.
       KONG_PROXY_ACCESS_LOG: /dev/null
-      KONG_PROXY_ERROR_LOG: /dev/stderr error
+      KONG_PROXY_ERROR_LOG: /dev/stderr
       SUPABASE_ANON_KEY: ${ANON_KEY:?ANON_KEY is required}
       SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY:?SERVICE_ROLE_KEY is required}
       SUPABASE_PUBLISHABLE_KEY: ""
