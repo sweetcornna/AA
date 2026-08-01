@@ -25,7 +25,7 @@ Email/password 注册当前不要求邮箱 confirmation，因此注册后立即�
 - transcript 先用于账单预填；用户核对并明确保存后，才可能依账单 audit 字段作为 `raw_text` 保存，同时记录 ASR provider 名称。
 - 用户拒绝麦克风权限、不同意云端转写或转写失败时，可继续使用手动输入。
 
-OpenAI 的数据处理/保留政策、账号区域设置和已批准的 Data Processing Agreement 必须在 production gate 中核对，并在公开隐私说明中给出准确链接和版本；不得在未核对实际账户配置时做“零保留”等承诺。
+OpenAI 默认对 API 输入/输出保留最多 30 天用于提供服务和识别滥用，之后从其系统删除（法律要求保留的除外）；Zero Data Retention 需单独申请、仅适用于符合条件的端点和用例。本项目当前未确认已获批 ZDR，因此语音数据按默认 30 天保留理解。OpenAI 的账号区域设置和已批准的 Data Processing Agreement 必须在 production gate 中核对，并在公开隐私说明中给出准确链接和版本；不得在未核对实际账户配置时做“零保留”等承诺。
 
 ## AI 辅助
 
@@ -55,7 +55,7 @@ APK 只允许包含 exact production HTTPS origin、public anon/publishable key 
 - 隐私联系邮箱/渠道：`<REQUIRED>`
 - 账号与账本数据删除申请方式和响应期限：`<REQUIRED>`
 - production Azure subscription/region 与 Azure 数据处理条款确认：`<REQUIRED>`
-- Resend 数据处理与保留政策链接/版本：`<REQUIRED>`
-- OpenAI ASR 数据处理与实际账户保留设置链接/版本：`<REQUIRED>`
+- Resend 数据处理与保留政策链接/版本：Data Processing Addendum（更新日期 2025-12-31）<https://resend.com/legal/dpa>；隐私政策 <https://resend.com/legal/privacy-policy>；子处理者清单 <https://resend.com/legal/subprocessors>。DPA Exhibit A 载明账户终止后 90 天内删除用户/收件人数据。**发布前须由运营方复核当时的最新版本日期。**
+- OpenAI ASR 数据处理与实际账户保留设置链接/版本：平台数据控制说明 <https://developers.openai.com/api/docs/guides/your-data>；企业隐私 <https://openai.com/enterprise-privacy/>。默认 API 输入/输出最多保留 30 天用于服务与滥用检测，之后删除（法律要求除外）；Zero Data Retention 需申请且仅限符合条件的端点与用例。**本项目当前未确认已获批 ZDR，因此按默认 30 天保留描述；不得声称零保留，除非运营方在实际账户设置中核实并在此记录。**
 - Azure Blob backup retention 与删除策略：`<REQUIRED>`
 - 生效日期与版本化变更记录：`<REQUIRED>`
