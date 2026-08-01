@@ -7,16 +7,18 @@ services:
     volumes:
       - restore-db-data:/var/lib/postgresql/data
       - restore-db-config:/etc/postgresql-custom
+      - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:ro
       - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
       - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
       - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
       - ./templates/db/aa-prerequisites.sql:/docker-entrypoint-initdb.d/migrations/98-aa-prerequisites.sql:ro
+      # webhooks.sql is intentionally omitted: it installs optional pg_net
+      # database-webhook helpers that none of this seven-service subset uses.
+      # logs.sql and pooler.sql remain excluded with Analytics and Supavisor.
     environment:
       POSTGRES_HOST: /var/run/postgresql
-      # migrate.sh connects as supabase_admin before running init-scripts/*.sql.
-      # Fresh Docker initdb creates only POSTGRES_USER, so retain the image's
-      # default here; its later postgres-role path also accommodates AMI state.
-      POSTGRES_USER: supabase_admin
+      # Inherit the pinned image's POSTGRES_USER=supabase_admin default, matching
+      # upstream Compose. migrate.sh creates the postgres role before init scripts.
       PGPORT: "5432"
       POSTGRES_PORT: "5432"
       PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
