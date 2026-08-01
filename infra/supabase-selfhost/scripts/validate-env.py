@@ -11,8 +11,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 TARGETS = {
-    "staging": ("aa-staging-primary", "https://staging-api.cornna.xyz", "18100", "/srv/aa/staging"),
-    "production": ("aa-production-primary", "https://api.cornna.xyz", "18101", "/srv/aa/production"),
+    "staging": ("aa-staging-primary", "https://aa-staging-api.cornna.xyz", "18100", "/srv/aa/staging"),
+    "production": ("aa-production-primary", "https://aa-api.cornna.xyz", "18101", "/srv/aa/production"),
 }
 BACKUP_DESTINATIONS = ("local", "azure-blob")
 COMMON_REQUIRED = {

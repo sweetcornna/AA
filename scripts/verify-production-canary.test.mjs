@@ -5,7 +5,7 @@ import { runCanary } from "./verify-production-canary.mjs";
 const circleId = "00000000-0000-4000-8000-000000000001";
 const runId = "0123456789abcdef";
 const configuration = {
-  url: "https://api.cornna.xyz",
+  url: "https://aa-api.cornna.xyz",
   publicKey: "sb_publishable_canary_test",
   otpEmail: "owner@example.test",
   passwordEmail: "member@example.test",

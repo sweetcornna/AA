@@ -7,8 +7,8 @@ AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不�
 
 | 环境 | Stack ID | 公共 API | Loopback Kong | 数据根目录 |
 | --- | --- | --- | --- | --- |
-| staging | `aa-staging-primary` | `https://staging-api.cornna.xyz` | `127.0.0.1:18100` | `/srv/aa/staging` |
-| production | `aa-production-primary` | `https://api.cornna.xyz` | `127.0.0.1:18101` | `/srv/aa/production` |
+| staging | `aa-staging-primary` | `https://aa-staging-api.cornna.xyz` | `127.0.0.1:18100` | `/srv/aa/staging` |
+| production | `aa-production-primary` | `https://aa-api.cornna.xyz` | `127.0.0.1:18101` | `/srv/aa/production` |
 
 当前 Standard_B2ats_v2（2 vCPU、`MemTotal` 约 914 MiB、4 GiB swap、Debian 11）使用 `single-stack` 是 operator 明确批准的 deliberate deviation。它不改变也不降低默认 `dual-stack` 合同。
 
@@ -25,7 +25,7 @@ AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不�
 - [ ] staging/production 的 Resend、OpenAI、数据库/JWT、备份凭据完全分开；
 - [ ] 备份模式已显式批准：默认 `azure-blob` 时 Azure Blob 容器和 VM managed identity 权限已配置，主机已从可信来源安装并验证 `age` 与 `azcopy`，且不使用长期 SAS URL；临时采用 `local` 时已接受同盘丢失风险并继续把 off-host copy 作为未完成 gate；
 - [ ] Azure effective NSG 已确认只开放批准的 22/80/443，或 WARP UDP 28526 例外已经明确批准；host INPUT=ACCEPT 不能替代控制面证据；
-- [ ] `api.cornna.xyz`、`staging-api.cornna.xyz` 的 DNS/TLS 变更已单独批准；
+- [ ] `aa-api.cornna.xyz`、`aa-staging-api.cornna.xyz` 的 DNS/TLS 变更已单独批准；
 - [ ] 已加密备份并恢复验证双 SSH key、Nginx/SNI、Xray unit/drop-in/config、WARP、Fail2ban、`/opt/light-panel/*` Docker bind data 与 certbot 账号/证书/续期配置，并记录回滚命令；
 - [ ] source commit clean，CI、基础设施测试和独立验证通过。
 
@@ -257,7 +257,7 @@ python3 infra/supabase-selfhost/scripts/render-nginx.py \
 3. 使用 DNS-01 或与现有 80/443 路由兼容的 webroot 签发 production 证书；dual-stack 才签发第二个 staging 证书；
 4. 备份 Nginx config 与 `/etc/sota-vless-hy/site-stream-map.conf`；
 5. 安装 loopback TLS vhost；
-6. single-stack 只增加 `api.cornna.xyz` exact SNI → `127.0.0.1:18544`；dual-stack 另加 staging → `127.0.0.1:18543`；
+6. single-stack 只增加 `aa-api.cornna.xyz` exact SNI → `127.0.0.1:18544`；dual-stack 另加 staging → `127.0.0.1:18543`；
 7. `nginx -t` 成功后 reload；失败立刻恢复备份；
 8. 验证 `panel4.cornna.xyz`、`cfv4.cornna.xyz`、Xray 和新增 production API host；
 9. 演练自动续期。
@@ -367,7 +367,7 @@ production 只运行批准的 self-cleaning ordinary-user canary，不运行 `ve
 先请求现有用户 OTP：
 
 ```bash
-AA_SUPABASE_URL=https://api.cornna.xyz \
+AA_SUPABASE_URL=https://aa-api.cornna.xyz \
 AA_SUPABASE_PUBLIC_KEY=<PRODUCTION-PUBLIC-KEY> \
 AA_CANARY_OTP_EMAIL=<DEDICATED-OTP-ACCOUNT> \
 AA_CANARY_PASSWORD_EMAIL=<DEDICATED-PASSWORD-ACCOUNT> \

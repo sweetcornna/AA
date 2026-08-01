@@ -132,7 +132,7 @@ jobs:
           CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
         run: |
           set -euo pipefail
-          [[ "$PRODUCTION_ORIGIN" == "https://api.cornna.xyz" ]]
+          [[ "$PRODUCTION_ORIGIN" == "https://aa-api.cornna.xyz" ]]
           [[ "$PRODUCTION_PUBLIC_KEY" == sb_publishable_* || "$PRODUCTION_PUBLIC_KEY" == eyJ* ]]
           [[ "$DEPLOYED_FINGERPRINT" == "$EXPECTED_FINGERPRINT" ]]
           normalized_cert="$(printf '%s' "$CERT_SHA256" | tr '[:lower:]' '[:upper:]' | tr -d ':')"
@@ -180,8 +180,8 @@ jobs:
         env:
           AA_ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
           AA_ANDROID_EXPECTED_VERSION_CODE: ${{ needs.validate-tag.outputs.version_code }}
-          AA_ANDROID_PRODUCTION_ORIGIN: https://api.cornna.xyz
-          AA_ANDROID_STAGING_ORIGIN: https://staging-api.cornna.xyz
+          AA_ANDROID_PRODUCTION_ORIGIN: https://aa-api.cornna.xyz
+          AA_ANDROID_STAGING_ORIGIN: https://aa-staging-api.cornna.xyz
           ANDROID_BUILD_TOOLS: ${{ env.ANDROID_SDK_ROOT }}/build-tools/36.0.0
         run: |
           set -euo pipefail

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveSupabaseConfiguration } from "./supabaseConfiguration";
 
-const HOSTED_URL = "https://api.cornna.xyz";
+const HOSTED_URL = "https://aa-api.cornna.xyz";
 const PUBLISHABLE_KEY = "sb_publishable_abc123";
 
 function legacyJwt(role: string): string {
@@ -44,10 +44,10 @@ describe("Supabase client configuration", () => {
   it.each([
     ["missing values", {}, /缺少/],
     ["invalid URL", { url: "not a URL", publishableKey: PUBLISHABLE_KEY }, /有效 URL/],
-    ["staging production URL", { url: "https://staging-api.cornna.xyz", publishableKey: PUBLISHABLE_KEY }, /api\.cornna\.xyz/],
-    ["old Supabase Cloud URL", { url: "https://abcdefghijklmnopqrst.supabase.co", publishableKey: PUBLISHABLE_KEY }, /api\.cornna\.xyz/],
-    ["production IP URL", { url: "https://40.115.207.13", publishableKey: PUBLISHABLE_KEY }, /api\.cornna\.xyz/],
-    ["URL with a port", { url: `${HOSTED_URL}:8443`, publishableKey: PUBLISHABLE_KEY }, /api\.cornna\.xyz/],
+    ["staging production URL", { url: "https://aa-staging-api.cornna.xyz", publishableKey: PUBLISHABLE_KEY }, /aa-api\.cornna\.xyz/],
+    ["old Supabase Cloud URL", { url: "https://abcdefghijklmnopqrst.supabase.co", publishableKey: PUBLISHABLE_KEY }, /aa-api\.cornna\.xyz/],
+    ["production IP URL", { url: "https://40.115.207.13", publishableKey: PUBLISHABLE_KEY }, /aa-api\.cornna\.xyz/],
+    ["URL with a port", { url: `${HOSTED_URL}:8443`, publishableKey: PUBLISHABLE_KEY }, /aa-api\.cornna\.xyz/],
     ["URL with a path", { url: `${HOSTED_URL}/rest/v1`, publishableKey: PUBLISHABLE_KEY }, /根地址/],
     ["placeholder", { url: HOSTED_URL, publishableKey: "sb_publishable_your-key" }, /占位值/],
     ["secret key", { url: HOSTED_URL, publishableKey: "sb_secret_abc" }, /secret/],

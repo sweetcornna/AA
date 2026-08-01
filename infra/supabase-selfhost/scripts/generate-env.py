@@ -14,13 +14,13 @@ from pathlib import Path
 TARGETS = {
     "staging": {
         "stack": "aa-staging-primary",
-        "origin": "https://staging-api.cornna.xyz",
+        "origin": "https://aa-staging-api.cornna.xyz",
         "port": "18100",
         "root": "/srv/aa/staging",
     },
     "production": {
         "stack": "aa-production-primary",
-        "origin": "https://api.cornna.xyz",
+        "origin": "https://aa-api.cornna.xyz",
         "port": "18101",
         "root": "/srv/aa/production",
     },

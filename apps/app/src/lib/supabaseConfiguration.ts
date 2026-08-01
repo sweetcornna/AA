@@ -13,7 +13,7 @@ export type SupabaseConfigurationResult =
   | { configuration: SupabaseConfiguration; error: null }
   | { configuration: null; error: string };
 
-const PRODUCTION_SUPABASE_ORIGIN = "https://api.cornna.xyz";
+const PRODUCTION_SUPABASE_ORIGIN = "https://aa-api.cornna.xyz";
 
 function jwtRole(value: string): string | null {
   const parts = value.split(".");

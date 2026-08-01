@@ -6,7 +6,7 @@
 // Staging: create an ignored schema-v3 dual-stack supabase/hosted-targets.json,
 //          verify the two approved targets, then run:
 //          AA_BACKEND_TEST_MODE=staging \
-//          AA_SUPABASE_URL=https://staging-api.cornna.xyz \
+//          AA_SUPABASE_URL=https://aa-staging-api.cornna.xyz \
 //          AA_SUPABASE_PUBLIC_KEY=<public-key> \
 //          AA_SUPABASE_SERVICE_ROLE_KEY=<runtime-secret> \
 //          node scripts/verify-backend.mjs
