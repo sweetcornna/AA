@@ -23,7 +23,11 @@ import {
   Svg,
 } from "../../components/ui";
 import { createExpense, getCircle, listMembers, parseExpense } from "../../lib/api";
-import { startCloudRecording, startWebSpeech, webSpeechAvailable } from "../../lib/speech";
+import {
+  startCloudRecording,
+  startWebSpeech,
+  webSpeechAvailable,
+} from "../../lib/speech";
 import type { Recording } from "../../lib/speech";
 import { useAuth } from "../auth/AuthProvider";
 
@@ -71,12 +75,22 @@ export function AddExpensePage() {
   // asrProvider is set when nlText came from voice; cleared when the user types.
   const [asrProvider, setAsrProvider] = useState<string | null>(null);
   const [aiMeta, setAiMeta] = useState<{ provider: string | null; confidence: number; raw: unknown } | null>(null);
-  // Voice capture state machine: idle → listening (Web Speech) / recording
-  // (cloud) → transcribing → idle.
-  const [voice, setVoice] = useState<"idle" | "listening" | "recording" | "transcribing">("idle");
+  // Voice capture state machine: idle → requesting → listening/recording →
+  // transcribing → idle. The ref is the synchronous lock for rapid taps.
+  const [voice, setVoice] = useState<"idle" | "requesting" | "listening" | "recording" | "transcribing">("idle");
+  const voiceRef = useRef<typeof voice>("idle");
+  const [voiceSeconds, setVoiceSeconds] = useState(0);
   const [voiceErr, setVoiceErr] = useState<string | null>(null);
+  const [showVoicePrivacy, setShowVoicePrivacy] = useState(false);
+  const pendingVoiceStartRef = useRef(false);
   const webStopRef = useRef<(() => void) | null>(null);
   const recRef = useRef<Recording | null>(null);
+  const voiceRunRef = useRef(0);
+
+  function transitionVoice(next: typeof voice) {
+    voiceRef.current = next;
+    setVoice(next);
+  }
 
   useEffect(() => {
     if (!members.data) return;
@@ -146,59 +160,120 @@ export function AddExpensePage() {
 
   const parse = useMutation({ mutationFn: () => parseExpense(circleId!, nlText.trim()), onSuccess: applyParsed });
 
-  // Prefer the free Web Speech API; fall back to record→cloud ASR where it is
-  // unavailable (e.g. iOS WKWebView). Tapping again stops the current capture.
-  async function toggleVoice() {
-    setVoiceErr(null);
-    if (voice === "listening") {
-      webStopRef.current?.();
-      return;
-    }
-    if (voice === "recording") {
-      const rec = recRef.current;
-      recRef.current = null;
-      if (!rec) return setVoice("idle");
-      setVoice("transcribing");
-      try {
-        const { text, provider } = await rec.stopAndTranscribe();
-        if (text) {
-          setNlText(text);
-          setAsrProvider(provider);
-        } else setVoiceErr("没听清，请再试一次或直接输入。");
-      } catch (e) {
-        setVoiceErr((e as Error).message || "语音转写失败，请直接输入。");
-      } finally {
-        setVoice("idle");
-      }
-      return;
-    }
-    // idle → start
-    if (webSpeechAvailable()) {
-      setVoice("listening");
-      setAsrProvider("web-speech");
-      webStopRef.current = startWebSpeech({
-        onText: (t) => setNlText(t),
-        onEnd: () => {
-          webStopRef.current = null;
-          setVoice("idle");
-        },
-        onError: (m) => setVoiceErr(m),
-      });
-      return;
-    }
+  async function finishCloudRecording(rec: Recording, run: number) {
+    if (voiceRef.current !== "recording" || recRef.current !== rec) return;
+    transitionVoice("transcribing");
     try {
-      recRef.current = await startCloudRecording();
-      setVoice("recording");
-    } catch {
-      setVoiceErr("无法访问麦克风，请直接输入文字。");
-      setVoice("idle");
+      const { text, provider } = await rec.stopAndTranscribe();
+      if (voiceRunRef.current !== run) return;
+      setNlText(text);
+      setAsrProvider(provider);
+    } catch (error) {
+      if (voiceRunRef.current === run) {
+        setVoiceErr(error instanceof Error ? error.message : "语音转写失败，请直接输入。");
+      }
+    } finally {
+      if (voiceRunRef.current === run) {
+        if (recRef.current === rec) recRef.current = null;
+        transitionVoice("idle");
+      }
     }
   }
 
-  // Stop any active capture if the user leaves the page.
-  useEffect(() => () => {
-    webStopRef.current?.();
-    recRef.current?.cancel();
+  async function startVoiceCapture() {
+    const run = ++voiceRunRef.current;
+    setVoiceErr(null);
+    pendingVoiceStartRef.current = false;
+
+    if (webSpeechAvailable()) {
+      transitionVoice("listening");
+      setAsrProvider("web-speech");
+      webStopRef.current = startWebSpeech({
+        onText: (text) => {
+          if (voiceRunRef.current === run) setNlText(text);
+        },
+        onEnd: () => {
+          if (voiceRunRef.current !== run) return;
+          webStopRef.current = null;
+          transitionVoice("idle");
+        },
+        onError: (message) => {
+          if (voiceRunRef.current === run) setVoiceErr(message);
+        },
+      });
+      return;
+    }
+
+    transitionVoice("requesting");
+    try {
+      const rec = await startCloudRecording();
+      if (voiceRunRef.current !== run || voiceRef.current !== "requesting") {
+        rec.cancel();
+        return;
+      }
+      recRef.current = rec;
+      setVoiceSeconds(0);
+      transitionVoice("recording");
+      void rec.stopped.then(() => {
+        if (voiceRunRef.current === run && recRef.current === rec) void finishCloudRecording(rec, run);
+      });
+    } catch (error) {
+      if (voiceRunRef.current !== run) return;
+      setVoiceErr(error instanceof Error ? error.message : "无法访问麦克风，请直接输入文字。");
+      transitionVoice("idle");
+    }
+  }
+
+  function toggleVoice() {
+    if (voiceRef.current === "requesting" || voiceRef.current === "transcribing") return;
+    if (voiceRef.current === "listening") {
+      webStopRef.current?.();
+      return;
+    }
+    if (voiceRef.current === "recording") {
+      const rec = recRef.current;
+      if (rec) void finishCloudRecording(rec, voiceRunRef.current);
+      return;
+    }
+    if (!webSpeechAvailable() && localStorage.getItem("aa.voice-cloud-consent") !== "1") {
+      pendingVoiceStartRef.current = true;
+      setShowVoicePrivacy(true);
+      return;
+    }
+    void startVoiceCapture();
+  }
+
+  useEffect(() => {
+    if (voice !== "recording") return;
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setVoiceSeconds(Math.min(60, Math.floor((Date.now() - startedAt) / 1000)));
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [voice]);
+
+  // Backgrounding or leaving invalidates callbacks and releases the microphone.
+  useEffect(() => {
+    const cancelVoice = () => {
+      voiceRunRef.current += 1;
+      webStopRef.current?.();
+      webStopRef.current = null;
+      recRef.current?.cancel();
+      recRef.current = null;
+      transitionVoice("idle");
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") cancelVoice();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pagehide", cancelVoice);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pagehide", cancelVoice);
+      voiceRunRef.current += 1;
+      webStopRef.current?.();
+      recRef.current?.cancel();
+    };
   }, []);
 
   const save = useMutation({
@@ -248,6 +323,35 @@ export function AddExpensePage() {
       </div>
 
       <div className="px-4 pb-10 pt-2">
+        {showVoicePrivacy && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 px-4 pb-[max(24px,env(safe-area-inset-bottom))]" role="dialog" aria-modal="true" aria-labelledby="voice-privacy-title">
+            <Card className="w-full max-w-md p-5">
+              <h2 id="voice-privacy-title" className="text-[18px] font-semibold">使用云端语音转写</h2>
+              <p className="mt-2 text-[14px] leading-relaxed" style={{ color: "var(--label2)" }}>
+                录音会加密上传到 AA 配置的语音识别服务，转写完成后即丢弃，不写入数据库或设备文件。转写文字仅在你核对并保存账单后按账单审计规则保存。
+              </p>
+              <div className="mt-5 flex gap-3">
+                <button className="h-11 flex-1 rounded-[10px] text-[16px]" style={{ background: "var(--seg-bg)" }} onClick={() => { pendingVoiceStartRef.current = false; setShowVoicePrivacy(false); }}>
+                  取消
+                </button>
+                <button
+                  className="h-11 flex-1 rounded-[10px] text-[16px] font-semibold text-white"
+                  style={{ background: "var(--blue)" }}
+                  onClick={() => {
+                    const shouldStart = pendingVoiceStartRef.current;
+                    pendingVoiceStartRef.current = false;
+                    localStorage.setItem("aa.voice-cloud-consent", "1");
+                    setShowVoicePrivacy(false);
+                    if (shouldStart) void startVoiceCapture();
+                  }}
+                >
+                  同意并录音
+                </button>
+              </div>
+            </Card>
+          </div>
+        )}
+
         {/* AI quick entry */}
         <Card className="mb-5 p-3">
           <div className="mb-1 px-1 text-[12px] font-semibold" style={{ color: "var(--label3)" }}>✨ 一句话记账</div>
@@ -271,10 +375,18 @@ export function AddExpensePage() {
                   ? { background: "var(--red)", color: "#fff" }
                   : { background: "var(--seg-bg)", color: "var(--ink)" }
               }
-              disabled={voice === "transcribing"}
+              disabled={voice === "requesting" || voice === "transcribing"}
               onClick={toggleVoice}
             >
-              {voice === "listening" ? "● 聆听中,点按停止" : voice === "recording" ? "● 录音中,点按结束" : voice === "transcribing" ? "转写中…" : "🎤 语音"}
+              {voice === "requesting"
+                ? "正在请求麦克风…"
+                : voice === "listening"
+                  ? "● 聆听中，点按停止"
+                  : voice === "recording"
+                    ? `● 录音 ${voiceSeconds}s / 60s，点按结束`
+                    : voice === "transcribing"
+                      ? "转写中…"
+                      : "🎤 语音"}
             </button>
             <button className="flex-1 rounded-[9px] py-2 text-[14px] font-semibold text-white disabled:opacity-40" style={{ background: "var(--blue)" }} disabled={!nlText.trim() || parse.isPending} onClick={() => parse.mutate()}>
               {parse.isPending ? "解析中…" : "AI 解析"}

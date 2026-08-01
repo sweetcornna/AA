@@ -1,0 +1,4 @@
+# Add these exact entries to the existing SNI stream map only after the
+# corresponding loopback TLS virtual hosts pass nginx -t.
+api.cornna.xyz 127.0.0.1:18544;
+staging-api.cornna.xyz 127.0.0.1:18543;

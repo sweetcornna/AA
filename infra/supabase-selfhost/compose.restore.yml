@@ -1,0 +1,47 @@
+name: ${AA_STACK_ID:?AA_STACK_ID is required}
+
+services:
+  db:
+    image: supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00
+    restart: "no"
+    volumes:
+      - restore-db-data:/var/lib/postgresql/data
+      - restore-db-config:/etc/postgresql-custom
+      - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
+      - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+      - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      - ./templates/db/aa-prerequisites.sql:/docker-entrypoint-initdb.d/migrations/98-aa-prerequisites.sql:ro
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_USER: postgres
+      PGPORT: "5432"
+      POSTGRES_PORT: "5432"
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATABASE: postgres
+      POSTGRES_DB: postgres
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXP: "3600"
+    command: [postgres, -c, config_file=/etc/postgresql/postgresql.conf, -c, log_min_messages=warning, -c, log_statement=none]
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres, -d, postgres, -h, localhost]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    shm_size: 256mb
+    mem_limit: 1200m
+    cpus: 1.25
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "2"
+    networks: [restore-internal]
+
+volumes:
+  restore-db-data:
+  restore-db-config:
+
+networks:
+  restore-internal:
+    internal: true

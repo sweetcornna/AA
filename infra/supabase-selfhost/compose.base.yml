@@ -1,0 +1,290 @@
+name: ${AA_STACK_ID:?AA_STACK_ID is required}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  db:
+    image: supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00
+    restart: unless-stopped
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - db-config:/etc/postgresql-custom
+      - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
+      - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+      - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      - ./templates/db/aa-prerequisites.sql:/docker-entrypoint-initdb.d/migrations/98-aa-prerequisites.sql:ro
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_USER: postgres
+      PGPORT: "5432"
+      POSTGRES_PORT: "5432"
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATABASE: postgres
+      POSTGRES_DB: postgres
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXP: "3600"
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - log_min_messages=warning
+      - -c
+      - log_statement=none
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres, -h, localhost]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    shm_size: 256mb
+    mem_limit: 1200m
+    cpus: 1.25
+    logging: *default-logging
+    networks: [backend]
+
+  templates:
+    image: nginxinc/nginx-unprivileged@sha256:47288214e27cc88b5b3c5277f4fcdb58bc29059f86121b59b9c1e1171938216e
+    restart: unless-stopped
+    volumes:
+      - ${AA_TEMPLATE_DIR:?AA_TEMPLATE_DIR is required}/confirmation.html:/usr/share/nginx/html/confirmation.html:ro
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8080/confirmation.html]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=8m
+      - /var/run:size=1m
+      - /tmp:size=8m
+    security_opt: [no-new-privileges:true]
+    mem_limit: 48m
+    cpus: 0.10
+    logging: *default-logging
+    networks: [backend]
+
+  auth:
+    image: supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      templates:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL:?API_EXTERNAL_URL is required}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      GOTRUE_SITE_URL: ${SITE_URL:?SITE_URL is required}
+      GOTRUE_URI_ALLOW_LIST: ""
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_PASSWORD_MIN_LENGTH: "6"
+      GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "true"
+      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "10"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      GOTRUE_JWT_ISSUER: ${API_EXTERNAL_URL:?API_EXTERNAL_URL is required}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_MAILER_OTP_LENGTH: "6"
+      GOTRUE_MAILER_OTP_EXP: "600"
+      GOTRUE_SMTP_MAX_FREQUENCY: 60s
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:?SMTP_HOST is required}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:?SMTP_PORT is required}
+      GOTRUE_SMTP_USER: ${SMTP_USER:?SMTP_USER is required}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:?SMTP_PASS is required}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:?SMTP_ADMIN_EMAIL is required}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-AA}
+      GOTRUE_MAILER_URLPATHS_INVITE: /verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /verify
+      GOTRUE_MAILER_SUBJECTS_MAGIC_LINK: AA 记账登录验证码
+      GOTRUE_MAILER_TEMPLATES_MAGIC_LINK: http://templates:8080/confirmation.html
+      GOTRUE_MFA_TOTP_ENROLL_ENABLED: "false"
+      GOTRUE_MFA_TOTP_VERIFY_ENABLED: "false"
+      GOTRUE_MFA_PHONE_ENROLL_ENABLED: "false"
+      GOTRUE_MFA_PHONE_VERIFY_ENABLED: "false"
+      GOTRUE_LOG_LEVEL: error
+    healthcheck:
+      test: [CMD, wget, --no-verbose, --tries=1, --spider, http://127.0.0.1:9999/health]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt: [no-new-privileges:true]
+    mem_limit: 320m
+    cpus: 0.50
+    logging: *default-logging
+    networks: [backend, egress]
+
+  rest:
+    image: postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_MAX_ROWS: "1000"
+      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_ADMIN_SERVER_PORT: "3001"
+      PGRST_ADMIN_SERVER_HOST: localhost
+      PGRST_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      PGRST_APP_SETTINGS_JWT_EXP: "3600"
+    healthcheck:
+      test: [CMD, postgrest, --ready]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt: [no-new-privileges:true]
+    mem_limit: 192m
+    cpus: 0.35
+    logging: *default-logging
+    networks: [backend]
+
+  realtime:
+    image: supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: "4000"
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: SET search_path TO _realtime
+      DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:?REALTIME_DB_ENC_KEY is required}
+      API_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?SECRET_KEY_BASE is required}
+      METRICS_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+      DISABLE_HEALTHCHECK_LOGGING: "true"
+    healthcheck:
+      test: [CMD-SHELL, 'curl -sSfL --head -o /dev/null -H "Authorization: Bearer ${ANON_KEY}" http://127.0.0.1:4000/api/tenants/realtime-dev/health']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    security_opt: [no-new-privileges:true]
+    mem_limit: 448m
+    cpus: 0.60
+    logging: *default-logging
+    networks:
+      backend:
+        aliases: [realtime-dev.supabase-realtime]
+
+  functions:
+    image: supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120
+    restart: unless-stopped
+    depends_on:
+      kong:
+        condition: service_healthy
+    volumes:
+      - ${AA_FUNCTIONS_DIR:?AA_FUNCTIONS_DIR is required}:/home/deno/functions:ro
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      VERIFY_JWT: "true"
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL:?SUPABASE_PUBLIC_URL is required}
+      SUPABASE_ANON_KEY: ${ANON_KEY:?ANON_KEY is required}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      OPENAI_BASE_URL: https://api.openai.com/v1
+      OPENAI_MODEL: gpt-4o-mini
+      LLM_PROVIDER: openai
+      ASR_BASE_URL: https://api.openai.com/v1
+      ASR_MODEL: gpt-4o-transcribe
+    command: [start, --main-service, /home/deno/functions/main]
+    healthcheck:
+      test: [CMD-SHELL, "timeout 1 bash -c '</dev/tcp/127.0.0.1/9000'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt: [no-new-privileges:true]
+    mem_limit: 640m
+    cpus: 0.75
+    logging: *default-logging
+    networks: [backend, egress]
+
+  kong:
+    image: kong/kong@sha256:6addf50e6bd8d578314cb9ce4f2d2d1e3781d2edecef59f707e00c6e05d384f5
+    restart: unless-stopped
+    depends_on:
+      auth:
+        condition: service_healthy
+      rest:
+        condition: service_healthy
+      realtime:
+        condition: service_healthy
+    ports:
+      - ${AA_KONG_BIND_HOST:?AA_KONG_BIND_HOST is required}:${AA_KONG_HTTP_PORT:?AA_KONG_HTTP_PORT is required}:8000/tcp
+    volumes:
+      - ./templates/kong/kong.yml:/home/kong/temp.yml:ro
+      - ${AA_UPSTREAM_DIR:?AA_UPSTREAM_DIR is required}/api/kong-entrypoint.sh:/home/kong/kong-entrypoint.sh:ro
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /usr/local/kong/kong.yml
+      KONG_ROUTER_FLAVOR: expressions
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_DNS_NOT_FOUND_TTL: "1"
+      KONG_DNS_VALID_TTL: "5"
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,request-termination
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      KONG_NGINX_HTTP_CLIENT_MAX_BODY_SIZE: 9m
+      KONG_PROXY_ACCESS_LOG: /dev/null
+      KONG_PROXY_ERROR_LOG: /dev/stderr error
+      SUPABASE_ANON_KEY: ${ANON_KEY:?ANON_KEY is required}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY:?SERVICE_ROLE_KEY is required}
+      SUPABASE_PUBLISHABLE_KEY: ""
+      SUPABASE_SECRET_KEY: ""
+      ANON_KEY_ASYMMETRIC: ""
+      SERVICE_ROLE_KEY_ASYMMETRIC: ""
+    entrypoint: [/bin/sh, /home/kong/kong-entrypoint.sh]
+    healthcheck:
+      test: [CMD, kong, health]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt: [no-new-privileges:true]
+    mem_limit: 320m
+    cpus: 0.45
+    logging: *default-logging
+    networks: [backend, gateway]
+
+volumes:
+  db-data:
+  db-config:
+
+networks:
+  backend:
+    driver: bridge
+    internal: true
+  egress:
+    driver: bridge
+  gateway:
+    driver: bridge

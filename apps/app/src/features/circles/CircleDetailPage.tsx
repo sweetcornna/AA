@@ -137,7 +137,9 @@ export function CircleDetailPage() {
                       {nameOf(members.data, t.from, user?.id)} <span style={{ color: "var(--label2)" }}>→</span> {nameOf(members.data, t.to, user?.id)}
                     </span>
                     <span className="tnum text-[15px] font-medium">{formatMoney(t.amount, currency)}</span>
-                    <button className="text-[15px]" style={{ color: "var(--blue)" }} disabled={settle.isPending} onClick={() => settle.mutate(t)}>标记已付</button>
+                    {t.from === user?.id && (
+                      <button className="text-[15px]" style={{ color: "var(--blue)" }} disabled={settle.isPending} onClick={() => settle.mutate(t)}>标记已付</button>
+                    )}
                   </div>
                 </div>
               ))}

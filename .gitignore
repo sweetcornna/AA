@@ -21,6 +21,9 @@ apps/app/src-tauri/gen/android/build/
 apps/app/src-tauri/gen/android/.gradle/
 apps/app/src-tauri/gen/android/.idea/
 apps/app/src-tauri/gen/android/local.properties
+apps/app/src-tauri/gen/android/keystore.properties
+*.jks
+*.keystore
 apps/app/src-tauri/gen/apple/build/
 apps/app/src-tauri/gen/apple/Externals/
 apps/app/src-tauri/gen/apple/Pods/
@@ -34,6 +37,7 @@ apps/app/src-tauri/gen/apple/.build/
 # supabase local
 supabase/.branches/
 supabase/.temp/
+supabase/hosted-targets.json
 
 # editor / os
 .DS_Store
@@ -47,5 +51,12 @@ playwright-report/
 test-results/
 
 # local tooling artifacts
+.claude/
 .playwright-mcp/
+__pycache__/
+*.pyc
 deno.lock
+!supabase/functions/deno.lock
+infra/supabase-selfhost/runtime/
+infra/supabase-selfhost/*.env
+!infra/supabase-selfhost/env/stack.env.example

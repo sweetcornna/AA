@@ -12,16 +12,43 @@ import { CirclesPage } from "./features/circles/CirclesPage";
 import { AddExpensePage } from "./features/expenses/AddExpensePage";
 import { JoinPage } from "./features/invitations/JoinPage";
 import { ProfilePage } from "./features/profile/ProfilePage";
+import { supabaseConfigurationError } from "./lib/supabase";
 
 const shell = (node: ReactNode) => <AppShell>{node}</AppShell>;
 
 export function App() {
-  const { loading, session } = useAuth();
+  const { error, loading, session } = useAuth();
+
+  if (supabaseConfigurationError) {
+    return (
+      <Centered>
+        <div className="max-w-sm px-6 text-center">
+          <h1 className="text-[20px] font-semibold">应用配置错误</h1>
+          <p className="mt-2 text-[14px] leading-relaxed" style={{ color: "var(--red)" }}>
+            {supabaseConfigurationError}
+          </p>
+          <p className="mt-3 text-[13px] leading-relaxed" style={{ color: "var(--label2)" }}>
+            请安装已正确配置的 AA 版本，或联系发布者重新构建应用。
+          </p>
+        </div>
+      </Centered>
+    );
+  }
 
   if (loading) {
     return (
       <Centered>
         <Spinner />
+      </Centered>
+    );
+  }
+
+  if (error) {
+    return (
+      <Centered>
+        <p className="max-w-sm px-6 text-center text-[14px]" style={{ color: "var(--red)" }}>
+          无法读取登录状态：{error}
+        </p>
       </Centered>
     );
   }

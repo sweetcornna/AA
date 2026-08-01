@@ -1,3 +1,4 @@
+import java.io.FileInputStream
 import java.util.Properties
 
 plugins {
@@ -12,6 +13,14 @@ val tauriProperties = Properties().apply {
         propFile.inputStream().use { load(it) }
     }
 }
+val releaseSigningRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+val appVersionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
+val appVersionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+if (releaseSigningRequested && (appVersionCode != 3 || appVersionName != "0.0.3")) {
+    throw GradleException("Release version must be 0.0.3 (versionCode 3)")
+}
 
 android {
     compileSdk = 36
@@ -21,8 +30,33 @@ android {
         applicationId = "com.aa.expense"
         minSdk = 24
         targetSdk = 36
-        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
-        versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+        versionCode = appVersionCode
+        versionName = appVersionName
+    }
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    val keystoreProperties = Properties()
+    if (releaseSigningRequested) {
+        if (!keystorePropertiesFile.isFile) {
+            throw GradleException("Missing release signing file: ${keystorePropertiesFile.path}")
+        }
+        FileInputStream(keystorePropertiesFile).use { keystoreProperties.load(it) }
+    }
+    fun signingProperty(name: String): String =
+        keystoreProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+            ?: throw GradleException("Missing release signing property: $name")
+
+    signingConfigs {
+        if (releaseSigningRequested) {
+            create("release") {
+                keyAlias = signingProperty("keyAlias")
+                keyPassword = signingProperty("keyPassword")
+                storeFile = rootProject.file(signingProperty("storeFile"))
+                storePassword = signingProperty("storePassword")
+                if (!storeFile!!.isFile) {
+                    throw GradleException("Release keystore does not exist: ${storeFile!!.path}")
+                }
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -30,13 +64,19 @@ android {
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
-            packaging {                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
+            packaging {
+                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
                 jniLibs.keepDebugSymbols.add("*/armeabi-v7a/*.so")
                 jniLibs.keepDebugSymbols.add("*/x86/*.so")
                 jniLibs.keepDebugSymbols.add("*/x86_64/*.so")
             }
         }
         getByName("release") {
+            if (releaseSigningRequested) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            isDebuggable = false
+            isJniDebuggable = false
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
@@ -50,6 +90,17 @@ android {
     }
     buildFeatures {
         buildConfig = true
+    }
+}
+
+gradle.taskGraph.whenReady {
+    val unresolvedReleaseTask = allTasks.any { task ->
+        task.project.path == project.path && task.name.contains("release", ignoreCase = true)
+    }
+    if (unresolvedReleaseTask && !releaseSigningRequested) {
+        throw GradleException(
+            "Release task resolved without release signing initialization; invoke an explicit Release task name"
+        )
     }
 }
 

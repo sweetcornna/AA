@@ -2,18 +2,25 @@
 // Idempotent-ish: reuses the demo users / circle / expense if already present.
 import { createClient } from "@supabase/supabase-js";
 
-const URL = process.env.VITE_SUPABASE_URL ?? "http://127.0.0.1:54321";
+// These are the public Supabase local-development keys. This script uses the
+// service role, so it is fail-closed to the loopback development stack and must
+// never be pointed at a hosted environment.
+const LOCAL_URL = "http://127.0.0.1:54321";
+const TARGET_URL = process.env.VITE_SUPABASE_URL ?? LOCAL_URL;
+if (new URL(TARGET_URL).origin !== LOCAL_URL) {
+  throw new Error(`seed-demo.mjs is local-only; refusing to run against ${TARGET_URL}`);
+}
 const ANON =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
 const SERVICE =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
 
-const admin = createClient(URL, SERVICE, { auth: { persistSession: false } });
+const admin = createClient(TARGET_URL, SERVICE, { auth: { persistSession: false } });
 
 async function ensureUser(email, password, displayName) {
   const { error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
   if (error && !/already|registered|exists/i.test(error.message)) throw error;
-  const client = createClient(URL, ANON, { auth: { persistSession: false } });
+  const client = createClient(TARGET_URL, ANON, { auth: { persistSession: false } });
   const { data, error: e2 } = await client.auth.signInWithPassword({ email, password });
   if (e2) throw e2;
   await client.from("profiles").update({ display_name: displayName }).eq("id", data.user.id);

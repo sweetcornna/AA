@@ -1,9 +1,9 @@
 [package]
 name = "aa"
-version = "0.0.0"
+version = "0.0.3"
 description = "AA 记账分账"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.85.0"
 
 [lib]
 # `_lib` suffix avoids name collision with the binary on Windows; the

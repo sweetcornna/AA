@@ -26,21 +26,22 @@ interface AiSettingsRow {
 /**
  * Pick the LLM provider for this request. `supabase` must be the caller's
  * RLS-scoped client (global row is readable by any signed-in user; circle rows
- * only by members). DB read errors are treated as "no settings".
+ * only by members). DB read errors fail closed to the local rule provider.
  */
 export async function resolveLLM(
   // deno-lint-ignore no-explicit-any
   supabase: any,
   circleId: string | null,
 ): Promise<LLMProvider> {
-  let rows: AiSettingsRow[] = [];
+  let rows: AiSettingsRow[];
   try {
     let q = supabase.from("ai_settings").select("circle_id, llm_provider, ai_enabled");
     q = circleId ? q.or(`circle_id.eq.${circleId},circle_id.is.null`) : q.is("circle_id", null);
-    const { data } = await q;
+    const { data, error } = await q;
+    if (error) return ruleProvider;
     rows = data ?? [];
   } catch {
-    // table unreachable → behave as if unconfigured
+    return ruleProvider;
   }
 
   const circleRow = circleId ? rows.find((r) => r.circle_id === circleId) : undefined;

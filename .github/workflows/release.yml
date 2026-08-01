@@ -1,53 +1,367 @@
-name: Release
+name: Android release candidate
 
-# Cut a release by pushing a version tag, e.g.:
-#   git tag v0.0.1 && git push origin v0.0.1
-# or run manually from the Actions tab (provide the tag). Builds the desktop
-# installers on all three OSes and publishes them to a GitHub Release.
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Release tag (e.g. v0.0.1)"
+      operation:
+        description: "Build a candidate or publish the exact verified candidate"
         required: true
+        default: candidate
+        type: choice
+        options: [candidate, publish]
+      tag:
+        description: "Existing immutable tag (for example v0.0.3)"
+        required: true
+        type: string
+      backend_fingerprint:
+        description: "Accepted production deployment bundle SHA-256"
+        required: true
+        type: string
+      candidate_run_id:
+        description: "Successful candidate workflow run ID (publish only)"
+        required: false
+        type: string
+      expected_apk_sha256:
+        description: "Exact candidate APK SHA-256 to publish (publish only)"
+        required: false
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
+
+concurrency:
+  group: android-release-${{ inputs.tag }}-${{ inputs.operation }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag }}
 
 jobs:
-  release:
-    name: Build + publish (${{ matrix.platform }})
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [macos-latest, ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.platform }}
+  validate-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.contract.outputs.version }}
+      version_code: ${{ steps.contract.outputs.version_code }}
+      sha: ${{ steps.contract.outputs.sha }}
+      fingerprint: ${{ steps.contract.outputs.fingerprint }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Validate immutable source and operation contract
+        id: contract
+        shell: bash
+        env:
+          OPERATION: ${{ inputs.operation }}
+          BACKEND_FINGERPRINT: ${{ inputs.backend_fingerprint }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          EXPECTED_APK_SHA256: ${{ inputs.expected_apk_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" == "v0.0.3" ]]
+          [[ "$BACKEND_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+          git fetch --tags origin
+          git show-ref --verify --quiet "refs/tags/$TAG"
+          sha="$(git rev-parse "$TAG^{commit}")"
+          [[ "$GITHUB_REF" == "refs/tags/$TAG" ]]
+          [[ "$GITHUB_SHA" == "$sha" ]]
+          git checkout --detach "$sha"
+          test -z "$(git status --porcelain)"
+          ! grep -q '<REQUIRED>' docs/PRIVACY.md
+          readarray -t version_contract < <(node - <<'NODE'
+          const fs = require('node:fs');
+          const config = JSON.parse(fs.readFileSync('apps/app/src-tauri/tauri.conf.json', 'utf8'));
+          console.log(config.version);
+          console.log(config.bundle?.android?.versionCode);
+          NODE
+          )
+          version="${version_contract[0]}"
+          version_code="${version_contract[1]}"
+          [[ "$version" == "0.0.3" ]]
+          [[ "$version_code" == "3" ]]
+          [[ "$TAG" == "v$version" ]]
+          fingerprint="$(node scripts/hosted-deployment.mjs fingerprint | node -e "let value=''; process.stdin.on('data', chunk => value += chunk); process.stdin.on('end', () => process.stdout.write(JSON.parse(value).bundleSha256))")"
+          [[ "$fingerprint" == "$BACKEND_FINGERPRINT" ]]
+          if [[ "$OPERATION" == "candidate" ]]; then
+            [[ -z "$CANDIDATE_RUN_ID" && -z "$EXPECTED_APK_SHA256" ]]
+          else
+            [[ "$OPERATION" == "publish" ]]
+            [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$EXPECTED_APK_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          fi
+          {
+            echo "sha=$sha"
+            echo "version=$version"
+            echo "version_code=$version_code"
+            echo "fingerprint=$fingerprint"
+          } >> "$GITHUB_OUTPUT"
+
+  android-candidate:
+    if: ${{ inputs.operation == 'candidate' }}
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.validate-tag.outputs.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: swatinem/rust-cache@v2
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          targets: aarch64-linux-android
+      - uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: apps/app/src-tauri
-      - name: Linux system deps (Tauri v2 / WebKitGTK)
-        if: matrix.platform == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
-      - run: npm ci
-      - name: Build + publish release
-        uses: tauri-apps/tauri-action@v0
+      - name: Validate protected production configuration
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTION_ORIGIN: ${{ vars.PRODUCTION_SUPABASE_URL }}
+          PRODUCTION_PUBLIC_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
+          DEPLOYED_FINGERPRINT: ${{ vars.PRODUCTION_DEPLOYMENT_FINGERPRINT }}
+          EXPECTED_FINGERPRINT: ${{ needs.validate-tag.outputs.fingerprint }}
+          CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          [[ "$PRODUCTION_ORIGIN" == "https://api.cornna.xyz" ]]
+          [[ "$PRODUCTION_PUBLIC_KEY" == sb_publishable_* || "$PRODUCTION_PUBLIC_KEY" == eyJ* ]]
+          [[ "$DEPLOYED_FINGERPRINT" == "$EXPECTED_FINGERPRINT" ]]
+          normalized_cert="$(printf '%s' "$CERT_SHA256" | tr '[:lower:]' '[:upper:]' | tr -d ':')"
+          [[ "$normalized_cert" =~ ^[0-9A-F]{64}$ ]]
+      - name: Install pinned Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.3.13750724"
+          sudo apt-get update
+          sudo apt-get install -y brotli
+      - run: npm ci
+      - name: Restore release signing material
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${KEYSTORE_BASE64:?}"
+          : "${KEY_ALIAS:?}"
+          : "${STORE_PASSWORD:?}"
+          : "${KEY_PASSWORD:?}"
+          android_dir="$GITHUB_WORKSPACE/apps/app/src-tauri/gen/android"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/aa-release.jks"
+          chmod 600 "$RUNNER_TEMP/aa-release.jks"
+          {
+            printf 'storeFile=%s\n' "$RUNNER_TEMP/aa-release.jks"
+            printf 'storePassword=%s\n' "$STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+          } > "$android_dir/keystore.properties"
+          chmod 600 "$android_dir/keystore.properties"
+      - name: Build signed arm64 APK once
+        shell: bash
+        env:
+          VITE_SUPABASE_URL: ${{ vars.PRODUCTION_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
+        run: scripts/android-build-apk.sh release
+      - name: Verify and package exact candidate
+        shell: bash
+        env:
+          AA_ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+          AA_ANDROID_EXPECTED_VERSION_CODE: ${{ needs.validate-tag.outputs.version_code }}
+          AA_ANDROID_PRODUCTION_ORIGIN: https://api.cornna.xyz
+          AA_ANDROID_STAGING_ORIGIN: https://staging-api.cornna.xyz
+          ANDROID_BUILD_TOOLS: ${{ env.ANDROID_SDK_ROOT }}/build-tools/36.0.0
+        run: |
+          set -euo pipefail
+          apk=apps/app/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+          [[ -f "$apk" ]]
+          scripts/android-verify-apk.sh "$apk" dist/android
+      - name: Record non-secret candidate identity
+        shell: bash
+        env:
+          SOURCE_COMMIT: ${{ needs.validate-tag.outputs.sha }}
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+          VERSION_CODE: ${{ needs.validate-tag.outputs.version_code }}
+          BACKEND_FINGERPRINT: ${{ needs.validate-tag.outputs.fingerprint }}
+          CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          mapfile -t apks < <(find dist/android -maxdepth 1 -type f -name '*.apk' -print)
+          [[ "${#apks[@]}" == 1 ]]
+          apk="${apks[0]}"
+          apk_sha256="$(sha256sum "$apk" | cut -d ' ' -f 1)"
+          normalized_cert="$(printf '%s' "$CERT_SHA256" | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+          mkdir -p dist/evidence
+          APK_NAME="$(basename "$apk")" APK_SHA256="$apk_sha256" NORMALIZED_CERT="$normalized_cert" \
+            node - <<'NODE'
+          const fs = require('node:fs');
+          const metadata = {
+            schemaVersion: 2,
+            repository: process.env.GITHUB_REPOSITORY,
+            candidateRunId: process.env.GITHUB_RUN_ID,
+            tag: process.env.TAG,
+            sourceCommit: process.env.SOURCE_COMMIT,
+            version: process.env.VERSION,
+            versionCode: Number(process.env.VERSION_CODE),
+            backendFingerprint: process.env.BACKEND_FINGERPRINT,
+            applicationId: 'com.aa.expense',
+            abi: 'arm64-v8a',
+            apkName: process.env.APK_NAME,
+            apkSha256: process.env.APK_SHA256,
+            certificateSha256: process.env.NORMALIZED_CERT,
+          };
+          fs.writeFileSync('dist/evidence/candidate-metadata.json', `${JSON.stringify(metadata, null, 2)}\n`);
+          NODE
+          mkdir -p dist/candidate
+          cp "$apk" "$apk.sha256" dist/evidence/candidate-metadata.json dist/candidate/
+          [[ "$(find dist/candidate -maxdepth 1 -type f | wc -l | tr -d ' ')" == 3 ]]
+          echo "### Android candidate" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK SHA-256: \`$apk_sha256\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Backend fingerprint: \`$BACKEND_FINGERPRINT\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove signing material
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/aa-release.jks" apps/app/src-tauri/gen/android/keystore.properties
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          projectPath: apps/app
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: "AA 记账 ${{ github.event.inputs.tag || github.ref_name }}"
-          releaseBody: "桌面安装包(macOS / Windows / Linux)。移动端构建见 README。"
-          releaseDraft: false
-          prerelease: false
+          name: android-arm64-${{ needs.validate-tag.outputs.version }}
+          path: dist/candidate/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: ${{ inputs.operation == 'publish' }}
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    environment: production-publish
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.validate-tag.outputs.sha }}
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - name: Install APK verification tools
+        shell: bash
+        run: sdkmanager "build-tools;36.0.0"
+      - name: Download the exact successful candidate run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          EXPECTED_SOURCE_COMMIT: ${{ needs.validate-tag.outputs.sha }}
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh api "repos/$REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
+          [[ "$(jq -r '.status' <<< "$run_json")" == "completed" ]]
+          [[ "$(jq -r '.conclusion' <<< "$run_json")" == "success" ]]
+          [[ "$(jq -r '.event' <<< "$run_json")" == "workflow_dispatch" ]]
+          [[ "$(jq -r '.path' <<< "$run_json")" == ".github/workflows/release.yml" ]]
+          [[ "$(jq -r '.repository.full_name' <<< "$run_json")" == "$REPOSITORY" ]]
+          [[ "$(jq -r '.head_sha' <<< "$run_json")" == "$EXPECTED_SOURCE_COMMIT" ]]
+          mkdir -p dist/candidate
+          gh run download "$CANDIDATE_RUN_ID" --repo "$REPOSITORY" \
+            --name "android-arm64-$VERSION" --dir dist/candidate
+      - name: Verify exact candidate identity and certificate
+        shell: bash
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ needs.validate-tag.outputs.sha }}
+          EXPECTED_VERSION: ${{ needs.validate-tag.outputs.version }}
+          EXPECTED_VERSION_CODE: ${{ needs.validate-tag.outputs.version_code }}
+          EXPECTED_BACKEND_FINGERPRINT: ${{ needs.validate-tag.outputs.fingerprint }}
+          EXPECTED_APK_SHA256: ${{ inputs.expected_apk_sha256 }}
+          EXPECTED_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+          EXPECTED_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          set -euo pipefail
+          mapfile -t apks < <(find dist/candidate -maxdepth 1 -type f -name '*.apk' -print)
+          mapfile -t checksums < <(find dist/candidate -maxdepth 1 -type f -name '*.apk.sha256' -print)
+          mapfile -t metadata < <(find dist/candidate -maxdepth 1 -type f -name 'candidate-metadata.json' -print)
+          [[ "${#apks[@]}" == 1 && "${#checksums[@]}" == 1 && "${#metadata[@]}" == 1 ]]
+          [[ "$(find dist/candidate -maxdepth 1 -type f | wc -l | tr -d ' ')" == 3 ]]
+          apk="${apks[0]}"
+          checksum="${checksums[0]}"
+          actual_sha="$(sha256sum "$apk" | cut -d ' ' -f 1)"
+          [[ "$actual_sha" == "$EXPECTED_APK_SHA256" ]]
+          (
+            cd dist/candidate
+            sha256sum --check "$(basename "$checksum")"
+          )
+          APK_NAME="$(basename "$apk")" node - "${metadata[0]}" <<'NODE'
+          const fs = require('node:fs');
+          const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const expected = {
+            schemaVersion: 2,
+            repository: process.env.GITHUB_REPOSITORY,
+            candidateRunId: process.env.EXPECTED_CANDIDATE_RUN_ID,
+            tag: process.env.TAG,
+            sourceCommit: process.env.EXPECTED_SOURCE_COMMIT,
+            version: process.env.EXPECTED_VERSION,
+            versionCode: Number(process.env.EXPECTED_VERSION_CODE),
+            backendFingerprint: process.env.EXPECTED_BACKEND_FINGERPRINT,
+            applicationId: 'com.aa.expense',
+            abi: 'arm64-v8a',
+            apkName: process.env.APK_NAME,
+            apkSha256: process.env.EXPECTED_APK_SHA256,
+            certificateSha256: process.env.EXPECTED_CERT_SHA256.toLowerCase().replaceAll(':', ''),
+          };
+          if (JSON.stringify(value) !== JSON.stringify(expected)) throw new Error('candidate metadata mismatch');
+          NODE
+          signer_output="$($ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner verify --verbose --print-certs "$apk")"
+          [[ "$signer_output" == *"Verified using v2 scheme (APK Signature Scheme v2): true"* ]]
+          [[ "$(grep -c '^Signer #[0-9][0-9]* certificate DN:' <<< "$signer_output")" == 1 ]]
+          cert="$(awk '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}' <<< "$signer_output" | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+          expected_cert="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+          [[ "$cert" == "$expected_cert" && "$cert" =~ ^[0-9a-f]{64}$ ]]
+          badging="$($ANDROID_SDK_ROOT/build-tools/36.0.0/aapt dump badging "$apk")"
+          [[ "$badging" == *"package: name='com.aa.expense'"* ]]
+          [[ "$badging" == *"versionName='$EXPECTED_VERSION'"* ]]
+          [[ "$badging" == *"versionCode='$EXPECTED_VERSION_CODE'"* ]]
+          native="$(unzip -Z1 "$apk" | grep '^lib/[^/]*/.*\.so$')"
+          [[ -n "$native" ]]
+          ! grep -v '^lib/arm64-v8a/' <<< "$native"
+      - name: Refuse existing public release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            echo "Refusing to modify existing release: $TAG" >&2
+            exit 1
+          fi
+      - name: Publish the unchanged verified APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EXPECTED_APK_SHA256: ${{ inputs.expected_apk_sha256 }}
+        run: |
+          set -euo pipefail
+          assets=(dist/candidate/*.apk dist/candidate/*.apk.sha256)
+          gh release create "$TAG" "${assets[@]}" \
+            --repo "$REPOSITORY" \
+            --verify-tag \
+            --title "AA 记账 $TAG" \
+            --notes "Android 正式版：release 签名、arm64-v8a、Android 7+。v0.0.2 debug 包需先卸载一次。APK SHA-256: $EXPECTED_APK_SHA256。已完成静态 hash、签名证书、application ID、version/versionCode、ABI 与 production origin 校验。经发布审批豁免真机验收；安装、登录、升级、机型兼容、麦克风与移动网络行为尚未在真机验证。"

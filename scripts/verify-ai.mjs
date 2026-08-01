@@ -8,13 +8,20 @@
 // stack serves supabase/functions/* on /functions/v1 automatically)
 import { createClient } from "@supabase/supabase-js";
 
-const URL = process.env.VITE_SUPABASE_URL ?? "http://127.0.0.1:54321";
+// These are the public Supabase local-development keys. This script uses the
+// service role and mutates global ai_settings, so it is fail-closed to the
+// loopback development stack and must never be pointed at a hosted environment.
+const LOCAL_URL = "http://127.0.0.1:54321";
+const TARGET_URL = process.env.VITE_SUPABASE_URL ?? LOCAL_URL;
+if (new URL(TARGET_URL).origin !== LOCAL_URL) {
+  throw new Error(`verify-ai.mjs is local-only; refusing to run against ${TARGET_URL}`);
+}
 const ANON =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
 const SERVICE =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
 
-const admin = createClient(URL, SERVICE, { auth: { persistSession: false } });
+const admin = createClient(TARGET_URL, SERVICE, { auth: { persistSession: false } });
 
 let failures = 0;
 function check(label, cond, extra = "") {
@@ -29,7 +36,7 @@ async function makeUser(tag, displayName) {
   const password = "Password123!";
   const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
   if (error) throw new Error(`createUser ${tag}: ${error.message}`);
-  const client = createClient(URL, ANON, { auth: { persistSession: false, autoRefreshToken: false } });
+  const client = createClient(TARGET_URL, ANON, { auth: { persistSession: false, autoRefreshToken: false } });
   const signIn = await client.auth.signInWithPassword({ email, password });
   if (signIn.error) throw new Error(`signIn ${tag}: ${signIn.error.message}`);
   await client.from("profiles").update({ display_name: displayName }).eq("id", data.user.id);
@@ -97,18 +104,17 @@ async function main() {
   const before = await admin.from("settlements").select("id").eq("circle_id", circleId);
   check("agent: nothing written before user confirms", (before.data ?? []).length === 0, `rows=${before.data?.length}`);
 
-  // user confirms → the client records the settlement itself (RLS applies)
+  // user confirms → the debtor-authorized RPC records the settlement
   if (act) {
-    const ins = await b.client.from("settlements").insert({
-      circle_id: act.circleId,
-      from_user: act.fromUser,
-      to_user: act.toUser,
-      amount_minor: act.amountMinor,
-      currency: act.currency,
-      note: "AI 助手记录",
-      created_by: b.id,
+    const ins = await b.client.rpc("create_settlement", {
+      p_circle_id: act.circleId,
+      p_from_user: act.fromUser,
+      p_to_user: act.toUser,
+      p_amount_minor: act.amountMinor,
+      p_currency: act.currency,
+      p_note: "AI 助手记录",
     });
-    check("confirm: settlement insert succeeds under RLS", !ins.error, ins.error?.message);
+    check("confirm: settlement RPC succeeds for debtor", !ins.error, ins.error?.message);
     const bal = await b.client.from("circle_balances").select("user_id, net_minor").eq("circle_id", circleId);
     const nets = Object.fromEntries((bal.data ?? []).map((r) => [r.user_id, r.net_minor]));
     check("confirm: balances settle to zero", nets[a.id] === 0 && nets[b.id] === 0, JSON.stringify(nets));
