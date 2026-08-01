@@ -4,8 +4,8 @@ import re
 from pathlib import Path
 
 TARGETS = {
-    "staging": {"host": "staging-api.cornna.xyz", "kong": "18100", "tls": "18543"},
-    "production": {"host": "api.cornna.xyz", "kong": "18101", "tls": "18544"},
+    "staging": {"host": "aa-staging-api.cornna.xyz", "kong": "18100", "tls": "18543"},
+    "production": {"host": "aa-api.cornna.xyz", "kong": "18101", "tls": "18544"},
 }
 
 parser = argparse.ArgumentParser()

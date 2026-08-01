@@ -776,7 +776,7 @@ def main() -> None:
             "python3", str(INFRA / "scripts/render-nginx.py"), "production",
             str(nginx_template), str(nginx_output), "--profile", "single-stack",
         ], check=True, stdout=subprocess.DEVNULL)
-        check("api.cornna.xyz" in nginx_output.read_text(), "single-stack Nginx render missed production host")
+        check("aa-api.cornna.xyz" in nginx_output.read_text(), "single-stack Nginx render missed production host")
         expect_failure([
             "python3", str(INFRA / "scripts/render-nginx.py"), "staging",
             str(nginx_template), str(root / "staging-nginx.conf"), "--profile", "single-stack",
@@ -963,16 +963,16 @@ def main() -> None:
 
     nginx_renderer = (INFRA / "scripts/render-nginx.py").read_text()
     check(
-        '"staging": {"host": "staging-api.cornna.xyz", "kong": "18100", "tls": "18543"}' in nginx_renderer,
+        '"staging": {"host": "aa-staging-api.cornna.xyz", "kong": "18100", "tls": "18543"}' in nginx_renderer,
         "staging Nginx target identity mismatch",
     )
     check(
-        '"production": {"host": "api.cornna.xyz", "kong": "18101", "tls": "18544"}' in nginx_renderer,
+        '"production": {"host": "aa-api.cornna.xyz", "kong": "18101", "tls": "18544"}' in nginx_renderer,
         "production Nginx target identity mismatch",
     )
     stream_map = (INFRA / "templates/nginx/site-stream-map.conf.example").read_text()
-    check("api.cornna.xyz 127.0.0.1:18544;" in stream_map, "production SNI route mismatch")
-    check("staging-api.cornna.xyz 127.0.0.1:18543;" in stream_map, "staging SNI route mismatch")
+    check("aa-api.cornna.xyz 127.0.0.1:18544;" in stream_map, "production SNI route mismatch")
+    check("aa-staging-api.cornna.xyz 127.0.0.1:18543;" in stream_map, "staging SNI route mismatch")
     check("18443" not in stream_map and "18444" not in stream_map, "AA SNI map reuses existing legacy ports")
 
     kong = (INFRA / "templates/kong/kong.yml").read_text()

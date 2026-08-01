@@ -4,7 +4,7 @@ AA 只处理完成认证、分账、实时同步、AI 辅助和语音转写所�
 
 ## 托管与处理区域
 
-- AA backend 计划自托管在 Azure Japan East VM，通过 `https://api.cornna.xyz` 提供 production API。
+- AA backend 计划自托管在 Azure Japan East VM，通过 `https://aa-api.cornna.xyz` 提供 production API。
 - staging 与 production 使用不同 Compose stack、数据库 volume、JWT、SMTP、OpenAI credential 和 backup container。
 - 数据库和内部服务不直接对公网开放；外部只经 TLS API gateway。
 - 第一版备份为每日 age-encrypted PostgreSQL logical backup，并复制到独立 Azure Blob container。未完成 base backup/WAL archive 与 restore 验收前，不声称具备 PITR。

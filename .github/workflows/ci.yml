@@ -17,7 +17,7 @@ permissions:
 # Production builds are fail-closed to the canonical self-hosted origin. This is
 # a synthetic public key used only for static build validation.
 env:
-  VITE_SUPABASE_URL: https://api.cornna.xyz
+  VITE_SUPABASE_URL: https://aa-api.cornna.xyz
   VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_build_validation
 
 jobs:

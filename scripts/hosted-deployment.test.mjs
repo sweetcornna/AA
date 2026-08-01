@@ -13,14 +13,14 @@ const staging = {
   deploymentType: "self-hosted",
   stackId: "aa-staging-primary",
   serverId: "azure-aa-40-115-207-13",
-  apiOrigin: "https://staging-api.cornna.xyz",
+  apiOrigin: "https://aa-staging-api.cornna.xyz",
   region: "japaneast",
 };
 const production = {
   deploymentType: "self-hosted",
   stackId: "aa-production-primary",
   serverId: "azure-aa-40-115-207-13",
-  apiOrigin: "https://api.cornna.xyz",
+  apiOrigin: "https://aa-api.cornna.xyz",
   region: "japaneast",
 };
 
@@ -131,7 +131,7 @@ test("rejects a noncanonical origin", () => {
 
 test("rejects ports, IP addresses, and old cloud origins", () => {
   for (const apiOrigin of [
-    "https://staging-api.cornna.xyz:8443",
+    "https://aa-staging-api.cornna.xyz:8443",
     "https://40.115.207.13",
     "https://abcdefghijklmnopqrst.supabase.co",
   ]) {

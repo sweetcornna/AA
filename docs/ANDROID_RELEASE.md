@@ -6,7 +6,7 @@ AA Android 永久使用 `com.aa.expense`，只发布 release 签名的 `arm64-v8
 
 APK 只允许包含：
 
-- `https://api.cornna.xyz`；
+- `https://aa-api.cornna.xyz`；
 - production public anon/publishable key；
 - release certificate SHA-256。
 
@@ -35,7 +35,7 @@ Secrets：
 
 Variables（均为公开配置）：
 
-- `PRODUCTION_SUPABASE_URL`，必须精确为 `https://api.cornna.xyz`
+- `PRODUCTION_SUPABASE_URL`，必须精确为 `https://aa-api.cornna.xyz`
 - `PRODUCTION_SUPABASE_PUBLISHABLE_KEY`
 - `PRODUCTION_DEPLOYMENT_FINGERPRINT`
 - `ANDROID_CERT_SHA256`
@@ -60,7 +60,7 @@ keyPassword=<secret>
 只有 backend gates 通过后才设置 public runtime 值：
 
 ```bash
-export VITE_SUPABASE_URL=https://api.cornna.xyz
+export VITE_SUPABASE_URL=https://aa-api.cornna.xyz
 export VITE_SUPABASE_PUBLISHABLE_KEY=<PRODUCTION-PUBLIC-KEY>
 scripts/android-build-apk.sh release
 ```
@@ -68,8 +68,8 @@ scripts/android-build-apk.sh release
 ```bash
 export AA_ANDROID_CERT_SHA256=<64-HEX-CERT-FINGERPRINT>
 export AA_ANDROID_EXPECTED_VERSION_CODE=3
-export AA_ANDROID_PRODUCTION_ORIGIN=https://api.cornna.xyz
-export AA_ANDROID_STAGING_ORIGIN=https://staging-api.cornna.xyz
+export AA_ANDROID_PRODUCTION_ORIGIN=https://aa-api.cornna.xyz
+export AA_ANDROID_STAGING_ORIGIN=https://aa-staging-api.cornna.xyz
 scripts/android-verify-apk.sh \
   apps/app/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
 ```

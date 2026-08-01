@@ -15,8 +15,8 @@ const EXPECTED_DEPLOYMENT_TYPE = "self-hosted";
 const EXPECTED_SERVER_ID = "azure-aa-40-115-207-13";
 const DEPLOYMENT_MODES = new Set(["dual-stack", "single-stack"]);
 const EXPECTED_ORIGINS = {
-  staging: "https://staging-api.cornna.xyz",
-  production: "https://api.cornna.xyz",
+  staging: "https://aa-staging-api.cornna.xyz",
+  production: "https://aa-api.cornna.xyz",
 };
 const EXPECTED_FUNCTIONS = ["agent-query", "asr-transcribe", "parse-expense"];
 const SOURCE_PATHS = [

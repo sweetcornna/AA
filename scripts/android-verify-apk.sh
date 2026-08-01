@@ -13,20 +13,20 @@ if [[ -z "$APK_PATH" || ! -f "$APK_PATH" ]]; then
 fi
 : "${AA_ANDROID_CERT_SHA256:?Set AA_ANDROID_CERT_SHA256 to the pinned release certificate SHA-256 fingerprint}"
 : "${AA_ANDROID_EXPECTED_VERSION_CODE:?Set AA_ANDROID_EXPECTED_VERSION_CODE to the approved Android versionCode}"
-: "${AA_ANDROID_PRODUCTION_ORIGIN:?Set AA_ANDROID_PRODUCTION_ORIGIN to https://api.cornna.xyz}"
-: "${AA_ANDROID_STAGING_ORIGIN:?Set AA_ANDROID_STAGING_ORIGIN to https://staging-api.cornna.xyz}"
+: "${AA_ANDROID_PRODUCTION_ORIGIN:?Set AA_ANDROID_PRODUCTION_ORIGIN to https://aa-api.cornna.xyz}"
+: "${AA_ANDROID_STAGING_ORIGIN:?Set AA_ANDROID_STAGING_ORIGIN to https://aa-staging-api.cornna.xyz}"
 
 EXPECTED_CERT="$(printf '%s' "$AA_ANDROID_CERT_SHA256" | tr '[:lower:]' '[:upper:]' | tr -d ':')"
 if [[ ! "$EXPECTED_CERT" =~ ^[0-9A-F]{64}$ ]]; then
   echo "AA_ANDROID_CERT_SHA256 must be a 32-byte SHA-256 fingerprint." >&2
   exit 1
 fi
-if [[ "$AA_ANDROID_PRODUCTION_ORIGIN" != "https://api.cornna.xyz" ]]; then
-  echo "AA_ANDROID_PRODUCTION_ORIGIN must be exactly https://api.cornna.xyz." >&2
+if [[ "$AA_ANDROID_PRODUCTION_ORIGIN" != "https://aa-api.cornna.xyz" ]]; then
+  echo "AA_ANDROID_PRODUCTION_ORIGIN must be exactly https://aa-api.cornna.xyz." >&2
   exit 1
 fi
-if [[ "$AA_ANDROID_STAGING_ORIGIN" != "https://staging-api.cornna.xyz" ]]; then
-  echo "AA_ANDROID_STAGING_ORIGIN must be exactly https://staging-api.cornna.xyz." >&2
+if [[ "$AA_ANDROID_STAGING_ORIGIN" != "https://aa-staging-api.cornna.xyz" ]]; then
+  echo "AA_ANDROID_STAGING_ORIGIN must be exactly https://aa-staging-api.cornna.xyz." >&2
   exit 1
 fi
 if [[ "$AA_ANDROID_EXPECTED_VERSION_CODE" != "3" ]]; then
