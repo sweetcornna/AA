@@ -113,9 +113,13 @@ manifest_path = root / ".aa-upstream-manifest.json"
 manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 manifest_path.chmod(0o444)
 PY
-chmod -R a-w "$WORK_DIR/output"
-python3 "$INFRA_DIR/scripts/verify-upstream.py" "$WORK_DIR/output" \
+# Files are already installed read-only. Directories must stay writable until
+# after the move: renaming a directory updates its own ".." entry, so a
+# read-only source directory makes mv fail with EACCES on Linux. Move first,
+# then seal the directories, then verify the sealed result in place.
+mv "$WORK_DIR/output" "$DESTINATION"
+find "$DESTINATION" -type d -exec chmod a-w {} +
+python3 "$INFRA_DIR/scripts/verify-upstream.py" "$DESTINATION" \
   --expected-commit "$SUPABASE_COMMIT" \
   --expected-archive-sha256 "$SUPABASE_ARCHIVE_SHA256"
-mv "$WORK_DIR/output" "$DESTINATION"
 printf 'Prepared verified Supabase upstream %s.\n' "$SUPABASE_COMMIT"

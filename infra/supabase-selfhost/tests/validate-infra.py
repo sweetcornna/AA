@@ -685,10 +685,16 @@ def main() -> None:
     for required in (
         '"path": relative', '"type": "file"', '"mode": mode', '"sha256": hashlib.sha256',
         'retained upstream contains a symlink', 'retained upstream file inventory mismatch',
-        'verify-upstream.py" "$WORK_DIR/output"',
+        'find "$DESTINATION" -type d -exec chmod a-w {} +',
     ):
         check(required in prepare_upstream, f"upstream preparation manifest contract missing: {required}")
     check('verify-upstream.py" "$DESTINATION"' in prepare_upstream, "prepared upstream reuse must verify the full manifest")
+    # Directories must be sealed before verification, and verification must be the
+    # last step so the published tree is what was actually checked.
+    seal_index = prepare_upstream.index('find "$DESTINATION" -type d -exec chmod a-w {} +')
+    move_index = prepare_upstream.index('mv "$WORK_DIR/output" "$DESTINATION"')
+    final_verify_index = prepare_upstream.rindex('verify-upstream.py" "$DESTINATION"')
+    check(move_index < seal_index < final_verify_index, "upstream must be moved, sealed, then verified in place")
     check('verify-upstream.py" "$UPSTREAM_DIR"' in build_functions, "function bundling must verify the full upstream manifest")
     for required in (
         'ENTRY_KEYS = {"path", "type", "mode", "sha256"}',
