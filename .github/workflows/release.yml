@@ -61,7 +61,11 @@ jobs:
           set -euo pipefail
           [[ "$TAG" == "v0.0.3" ]]
           [[ "$BACKEND_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
-          git fetch --tags origin
+          # The checkout already carries the triggering tag, so a plain fetch
+          # aborts with "would clobber existing tag". Forcing the refresh is safe:
+          # the tag ruleset forbids moving refs/tags/v*, and the checks below still
+          # pin GITHUB_REF and GITHUB_SHA to the exact tagged commit.
+          git fetch --tags --force origin
           git show-ref --verify --quiet "refs/tags/$TAG"
           sha="$(git rev-parse "$TAG^{commit}")"
           [[ "$GITHUB_REF" == "refs/tags/$TAG" ]]
