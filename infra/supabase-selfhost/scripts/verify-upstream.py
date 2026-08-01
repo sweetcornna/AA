@@ -14,6 +14,7 @@ ENTRY_KEYS = {"path", "type", "mode", "sha256"}
 EXPECTED_FILES = {
     ".aa-upstream-sha256": "0444",
     "api/kong-entrypoint.sh": "0555",
+    "db/_supabase.sql": "0444",
     "db/jwt.sql": "0444",
     "db/realtime.sql": "0444",
     "db/roles.sql": "0444",

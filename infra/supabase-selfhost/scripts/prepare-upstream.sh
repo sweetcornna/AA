@@ -54,6 +54,7 @@ assert_sha256 "$ENV_EXAMPLE_SHA256" "$SOURCE/docker/.env.example"
 
 mkdir -p "$WORK_DIR/output/api" "$WORK_DIR/output/db" "$WORK_DIR/output/functions/main"
 install -m 0555 "$SOURCE/docker/volumes/api/kong-entrypoint.sh" "$WORK_DIR/output/api/kong-entrypoint.sh"
+install -m 0444 "$SOURCE/docker/volumes/db/_supabase.sql" "$WORK_DIR/output/db/_supabase.sql"
 install -m 0444 "$SOURCE/docker/volumes/db/realtime.sql" "$WORK_DIR/output/db/realtime.sql"
 install -m 0444 "$SOURCE/docker/volumes/db/roles.sql" "$WORK_DIR/output/db/roles.sql"
 install -m 0444 "$SOURCE/docker/volumes/db/jwt.sql" "$WORK_DIR/output/db/jwt.sql"
@@ -72,6 +73,7 @@ root = Path(sys.argv[1])
 expected = {
     ".aa-upstream-sha256": "0444",
     "api/kong-entrypoint.sh": "0555",
+    "db/_supabase.sql": "0444",
     "db/jwt.sql": "0444",
     "db/realtime.sql": "0444",
     "db/roles.sql": "0444",

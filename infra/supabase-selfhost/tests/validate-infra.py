@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import ast
 import json
 import os
 import re
@@ -31,6 +32,21 @@ IMAGE_LOCK_KEYS = {
     "functions": "FUNCTIONS_IMAGE",
     "kong": "KONG_IMAGE",
 }
+EXPECTED_RETAINED_UPSTREAM_FILES = {
+    ".aa-upstream-sha256": "0444",
+    "api/kong-entrypoint.sh": "0555",
+    "db/_supabase.sql": "0444",
+    "db/jwt.sql": "0444",
+    "db/realtime.sql": "0444",
+    "db/roles.sql": "0444",
+    "functions/main/index.ts": "0444",
+}
+EXPECTED_DB_INIT_TARGETS = {
+    "db/_supabase.sql": "/docker-entrypoint-initdb.d/migrations/97-_supabase.sql",
+    "db/realtime.sql": "/docker-entrypoint-initdb.d/migrations/99-realtime.sql",
+    "db/roles.sql": "/docker-entrypoint-initdb.d/init-scripts/99-roles.sql",
+    "db/jwt.sql": "/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql",
+}
 
 
 def check(condition: bool, message: str) -> None:
@@ -55,6 +71,29 @@ def expect_failure(command: list[str]) -> None:
 def sha256(value: bytes) -> str:
     import hashlib
     return hashlib.sha256(value).hexdigest()
+
+
+def db_init_bind_mounts(service: dict) -> dict[str, str]:
+    mounts = {}
+    for mount in service.get("volumes", []):
+        if (
+            isinstance(mount, dict)
+            and mount.get("type") == "bind"
+            and mount.get("target", "").startswith("/docker-entrypoint-initdb.d/")
+        ):
+            check(mount.get("read_only") is True, "database init bind must be read-only")
+            mounts[mount["target"]] = mount["source"]
+    return mounts
+
+
+def assigned_literal(source: str, name: str) -> object:
+    module = ast.parse(source)
+    for node in module.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise ValueError(f"assignment not found: {name}")
 
 
 def check_capacity_profiles() -> None:
@@ -195,6 +234,7 @@ def write_artifact_fixture(runtime: Path, fingerprint: dict, upstream_commit: st
 def main() -> None:
     check_capacity_profiles()
     source = COMPOSE.read_text()
+    prerequisites = (INFRA / "templates/db/aa-prerequisites.sql").read_text()
     check("container_name:" not in source, "Compose must not pin container names")
     check("latest" not in source, "Compose must not use latest tags")
     check("VERIFY_JWT: \"true\"" in source, "Edge gateway JWT verification must be enabled")
@@ -202,6 +242,17 @@ def main() -> None:
     check("GOTRUE_MFA_TOTP_ENROLL_ENABLED: \"false\"" in source, "TOTP MFA must be disabled")
     check("GOTRUE_MAILER_OTP_LENGTH: \"6\"" in source and "GOTRUE_MAILER_OTP_EXP: \"600\"" in source, "OTP contract mismatch")
     check("/home/deno/functions:ro" in source, "function artifact must be read-only")
+    for required in (
+        "alter function auth.uid() owner to supabase_auth_admin;",
+        "alter function auth.role() owner to supabase_auth_admin;",
+        "alter function auth.email() owner to supabase_auth_admin;",
+        "create schema if not exists _realtime;",
+        "alter schema _realtime owner to supabase_admin;",
+        "create schema if not exists extensions;",
+        "create extension if not exists pgcrypto with schema extensions;",
+        "create publication supabase_realtime",
+    ):
+        check(required in prerequisites, f"database prerequisite contract missing: {required}")
 
     canary_migration = (ROOT / "supabase/migrations/0011_production_canary_cleanup.sql").read_text()
     for required in (
@@ -755,10 +806,21 @@ def main() -> None:
             check(not ports, f"{name} must not expose host ports")
         check(set(service.get("networks", {})) == EXPECTED_NETWORKS[name], f"{name} network membership mismatch")
     check(services["realtime"]["networks"]["backend"].get("aliases") == ["realtime-dev.supabase-realtime"], "Realtime network alias mismatch")
+    expected_db_init_mounts = {
+        target: str(Path(values["AA_UPSTREAM_DIR"]) / relative)
+        for relative, target in EXPECTED_DB_INIT_TARGETS.items()
+    }
+    expected_db_init_mounts["/docker-entrypoint-initdb.d/migrations/98-aa-prerequisites.sql"] = str(
+        INFRA / "templates/db/aa-prerequisites.sql"
+    )
+    check(
+        db_init_bind_mounts(services["db"]) == expected_db_init_mounts,
+        "database init mount set mismatch",
+    )
     db_environment = services["db"]["environment"]
     check(
-        db_environment.get("POSTGRES_USER") == "supabase_admin",
-        "fresh database bootstrap must create supabase_admin before migrate.sh runs",
+        "POSTGRES_USER" not in db_environment,
+        "database bootstrap must inherit the pinned image's supabase_admin default",
     )
     check(
         db_environment.get("POSTGRES_PASSWORD") == values["POSTGRES_PASSWORD"]
@@ -830,10 +892,21 @@ def main() -> None:
     for mount in restore_db.get("volumes", []):
         if isinstance(mount, dict) and mount.get("type") == "bind":
             check(mount.get("read_only") is True, "restore database host bind must be read-only")
+    expected_restore_init_mounts = {
+        target: str(Path(restore_values["AA_UPSTREAM_DIR"]) / relative)
+        for relative, target in EXPECTED_DB_INIT_TARGETS.items()
+    }
+    expected_restore_init_mounts["/docker-entrypoint-initdb.d/migrations/98-aa-prerequisites.sql"] = str(
+        INFRA / "templates/db/aa-prerequisites.sql"
+    )
+    check(
+        db_init_bind_mounts(restore_db) == expected_restore_init_mounts,
+        "restore database init mount set mismatch",
+    )
     restore_db_environment = restore_db["environment"]
     check(
-        restore_db_environment.get("POSTGRES_USER") == "supabase_admin",
-        "fresh restore bootstrap must create supabase_admin before migrate.sh runs",
+        "POSTGRES_USER" not in restore_db_environment,
+        "restore bootstrap must inherit the pinned image's supabase_admin default",
     )
     check(
         restore_db_environment.get("POSTGRES_PASSWORD") == restore_values["POSTGRES_PASSWORD"]
@@ -983,6 +1056,28 @@ def main() -> None:
     prepare_upstream = (INFRA / "scripts/prepare-upstream.sh").read_text()
     build_functions = (INFRA / "scripts/build-functions.sh").read_text()
     upstream_verifier = (INFRA / "scripts/verify-upstream.py").read_text()
+    prepare_expected_match = re.search(
+        r"expected = (\{.*?\})\nactual = set\(\)", prepare_upstream, flags=re.DOTALL
+    )
+    check(prepare_expected_match is not None, "upstream preparation allowlist is missing")
+    check(
+        ast.literal_eval(prepare_expected_match.group(1)) == EXPECTED_RETAINED_UPSTREAM_FILES,
+        "upstream preparation retained-file set mismatch",
+    )
+    check(
+        assigned_literal(upstream_verifier, "EXPECTED_FILES") == EXPECTED_RETAINED_UPSTREAM_FILES,
+        "upstream verification retained-file set mismatch",
+    )
+    check(
+        'install -m 0444 "$SOURCE/docker/volumes/db/_supabase.sql" "$WORK_DIR/output/db/_supabase.sql"'
+        in prepare_upstream,
+        "_supabase.sql must be extracted from the verified archive",
+    )
+    for compose_source in (source, restore_source):
+        check(
+            "webhooks.sql is intentionally omitted" in compose_source and "optional pg_net" in compose_source,
+            "webhooks.sql exclusion rationale is missing",
+        )
     for required in (
         '"path": relative', '"type": "file"', '"mode": mode', '"sha256": hashlib.sha256',
         'retained upstream contains a symlink', 'retained upstream file inventory mismatch',
