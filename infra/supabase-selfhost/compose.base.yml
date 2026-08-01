@@ -19,7 +19,10 @@ services:
       - ./templates/db/aa-prerequisites.sql:/docker-entrypoint-initdb.d/migrations/98-aa-prerequisites.sql:ro
     environment:
       POSTGRES_HOST: /var/run/postgresql
-      POSTGRES_USER: postgres
+      # migrate.sh connects as supabase_admin before running init-scripts/*.sql.
+      # Fresh Docker initdb creates only POSTGRES_USER, so retain the image's
+      # default here; its later postgres-role path also accommodates AMI state.
+      POSTGRES_USER: supabase_admin
       PGPORT: "5432"
       POSTGRES_PORT: "5432"
       PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}

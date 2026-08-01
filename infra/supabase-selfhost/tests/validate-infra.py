@@ -755,6 +755,16 @@ def main() -> None:
             check(not ports, f"{name} must not expose host ports")
         check(set(service.get("networks", {})) == EXPECTED_NETWORKS[name], f"{name} network membership mismatch")
     check(services["realtime"]["networks"]["backend"].get("aliases") == ["realtime-dev.supabase-realtime"], "Realtime network alias mismatch")
+    db_environment = services["db"]["environment"]
+    check(
+        db_environment.get("POSTGRES_USER") == "supabase_admin",
+        "fresh database bootstrap must create supabase_admin before migrate.sh runs",
+    )
+    check(
+        db_environment.get("POSTGRES_PASSWORD") == values["POSTGRES_PASSWORD"]
+        and db_environment.get("PGPASSWORD") == values["POSTGRES_PASSWORD"],
+        "fresh database bootstrap must give supabase_admin the configured database password",
+    )
     check(set(parsed.get("volumes", {})) == {"db-config", "db-data"}, "unexpected persistent volumes")
     networks = parsed.get("networks", {})
     check(set(networks) == {"backend", "egress", "gateway"}, "unexpected Compose networks")
@@ -820,7 +830,17 @@ def main() -> None:
     for mount in restore_db.get("volumes", []):
         if isinstance(mount, dict) and mount.get("type") == "bind":
             check(mount.get("read_only") is True, "restore database host bind must be read-only")
-    check(restore_db["environment"]["PGDATABASE"] == "postgres" and restore_db["environment"]["POSTGRES_DB"] == "postgres", "restore bootstrap database mismatch")
+    restore_db_environment = restore_db["environment"]
+    check(
+        restore_db_environment.get("POSTGRES_USER") == "supabase_admin",
+        "fresh restore bootstrap must create supabase_admin before migrate.sh runs",
+    )
+    check(
+        restore_db_environment.get("POSTGRES_PASSWORD") == restore_values["POSTGRES_PASSWORD"]
+        and restore_db_environment.get("PGPASSWORD") == restore_values["POSTGRES_PASSWORD"],
+        "fresh restore bootstrap must give supabase_admin the configured database password",
+    )
+    check(restore_db_environment["PGDATABASE"] == "postgres" and restore_db_environment["POSTGRES_DB"] == "postgres", "restore bootstrap database mismatch")
     check(restore_db["healthcheck"]["test"] == ["CMD", "pg_isready", "-U", "postgres", "-d", "postgres", "-h", "localhost"], "restore healthcheck must target bootstrap postgres")
     check(not restore_db.get("ports"), "restore database must not expose host ports")
     check(set(restore_db.get("networks", {})) == {"restore-internal"}, "restore database network mismatch")
