@@ -10,7 +10,7 @@ on:
         type: choice
         options: [candidate, publish]
       tag:
-        description: "Existing immutable tag (for example v0.0.3)"
+        description: "Existing immutable tag (for example v0.0.4)"
         required: true
         type: string
       backend_fingerprint:
@@ -59,7 +59,7 @@ jobs:
           EXPECTED_APK_SHA256: ${{ inputs.expected_apk_sha256 }}
         run: |
           set -euo pipefail
-          [[ "$TAG" == "v0.0.3" ]]
+          [[ "$TAG" == "v0.0.4" ]]
           [[ "$BACKEND_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
           # The checkout already carries the triggering tag, so a plain fetch
           # aborts with "would clobber existing tag". Forcing the refresh is safe:
@@ -82,8 +82,8 @@ jobs:
           )
           version="${version_contract[0]}"
           version_code="${version_contract[1]}"
-          [[ "$version" == "0.0.3" ]]
-          [[ "$version_code" == "3" ]]
+          [[ "$version" == "0.0.4" ]]
+          [[ "$version_code" == "4" ]]
           [[ "$TAG" == "v$version" ]]
           fingerprint="$(node scripts/hosted-deployment.mjs fingerprint | node -e "let value=''; process.stdin.on('data', chunk => value += chunk); process.stdin.on('end', () => process.stdout.write(JSON.parse(value).bundleSha256))")"
           [[ "$fingerprint" == "$BACKEND_FINGERPRINT" ]]
@@ -137,10 +137,16 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$PRODUCTION_ORIGIN" == "https://aa-api.cornna.xyz" ]]
-          [[ "$PRODUCTION_PUBLIC_KEY" == sb_publishable_* || "$PRODUCTION_PUBLIC_KEY" == eyJ* ]]
+          [[ "$PRODUCTION_PUBLIC_KEY" =~ ^sb_publishable_[A-Za-z0-9_-]{16,}$ ]]
           [[ "$DEPLOYED_FINGERPRINT" == "$EXPECTED_FINGERPRINT" ]]
           normalized_cert="$(printf '%s' "$CERT_SHA256" | tr '[:lower:]' '[:upper:]' | tr -d ':')"
           [[ "$normalized_cert" =~ ^[0-9A-F]{64}$ ]]
+      - name: Verify production gateway accepts the build key
+        env:
+          AA_SUPABASE_URL: ${{ vars.PRODUCTION_SUPABASE_URL }}
+          AA_SUPABASE_PUBLIC_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
+          AA_HOSTED_TARGETS_FILE: supabase/hosted-targets.example.json
+        run: node scripts/verify-production-public-key.mjs
       - name: Install pinned Android toolchain
         shell: bash
         run: |
@@ -185,6 +191,7 @@ jobs:
           AA_ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
           AA_ANDROID_EXPECTED_VERSION_CODE: ${{ needs.validate-tag.outputs.version_code }}
           AA_ANDROID_PRODUCTION_ORIGIN: https://aa-api.cornna.xyz
+          AA_ANDROID_PRODUCTION_PUBLIC_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
           AA_ANDROID_STAGING_ORIGIN: https://aa-staging-api.cornna.xyz
           ANDROID_BUILD_TOOLS: ${{ env.ANDROID_SDK_ROOT }}/build-tools/36.0.0
         run: |
@@ -200,6 +207,7 @@ jobs:
           VERSION_CODE: ${{ needs.validate-tag.outputs.version_code }}
           BACKEND_FINGERPRINT: ${{ needs.validate-tag.outputs.fingerprint }}
           CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+          PRODUCTION_PUBLIC_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
           mapfile -t apks < <(find dist/android -maxdepth 1 -type f -name '*.apk' -print)
@@ -207,12 +215,13 @@ jobs:
           apk="${apks[0]}"
           apk_sha256="$(sha256sum "$apk" | cut -d ' ' -f 1)"
           normalized_cert="$(printf '%s' "$CERT_SHA256" | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+          public_key_sha256="$(printf '%s' "$PRODUCTION_PUBLIC_KEY" | sha256sum | cut -d ' ' -f 1)"
           mkdir -p dist/evidence
-          APK_NAME="$(basename "$apk")" APK_SHA256="$apk_sha256" NORMALIZED_CERT="$normalized_cert" \
+          APK_NAME="$(basename "$apk")" APK_SHA256="$apk_sha256" NORMALIZED_CERT="$normalized_cert" PUBLIC_KEY_SHA256="$public_key_sha256" \
             node - <<'NODE'
           const fs = require('node:fs');
           const metadata = {
-            schemaVersion: 2,
+            schemaVersion: 3,
             repository: process.env.GITHUB_REPOSITORY,
             candidateRunId: process.env.GITHUB_RUN_ID,
             tag: process.env.TAG,
@@ -220,6 +229,7 @@ jobs:
             version: process.env.VERSION,
             versionCode: Number(process.env.VERSION_CODE),
             backendFingerprint: process.env.BACKEND_FINGERPRINT,
+            publishableKeySha256: process.env.PUBLIC_KEY_SHA256,
             applicationId: 'com.aa.expense',
             abi: 'arm64-v8a',
             apkName: process.env.APK_NAME,
@@ -258,6 +268,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.validate-tag.outputs.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
           distribution: temurin
@@ -266,6 +279,12 @@ jobs:
       - name: Install APK verification tools
         shell: bash
         run: sdkmanager "build-tools;36.0.0"
+      - name: Reverify production gateway accepts the candidate key
+        env:
+          AA_SUPABASE_URL: ${{ vars.PRODUCTION_SUPABASE_URL }}
+          AA_SUPABASE_PUBLIC_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
+          AA_HOSTED_TARGETS_FILE: supabase/hosted-targets.example.json
+        run: node scripts/verify-production-public-key.mjs
       - name: Download the exact successful candidate run
         shell: bash
         env:
@@ -295,6 +314,7 @@ jobs:
           EXPECTED_BACKEND_FINGERPRINT: ${{ needs.validate-tag.outputs.fingerprint }}
           EXPECTED_APK_SHA256: ${{ inputs.expected_apk_sha256 }}
           EXPECTED_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+          EXPECTED_PRODUCTION_PUBLIC_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
           EXPECTED_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
         run: |
           set -euo pipefail
@@ -312,10 +332,11 @@ jobs:
             sha256sum --check "$(basename "$checksum")"
           )
           APK_NAME="$(basename "$apk")" node - "${metadata[0]}" <<'NODE'
+          const crypto = require('node:crypto');
           const fs = require('node:fs');
           const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
           const expected = {
-            schemaVersion: 2,
+            schemaVersion: 3,
             repository: process.env.GITHUB_REPOSITORY,
             candidateRunId: process.env.EXPECTED_CANDIDATE_RUN_ID,
             tag: process.env.TAG,
@@ -323,6 +344,7 @@ jobs:
             version: process.env.EXPECTED_VERSION,
             versionCode: Number(process.env.EXPECTED_VERSION_CODE),
             backendFingerprint: process.env.EXPECTED_BACKEND_FINGERPRINT,
+            publishableKeySha256: crypto.createHash('sha256').update(process.env.EXPECTED_PRODUCTION_PUBLIC_KEY).digest('hex'),
             applicationId: 'com.aa.expense',
             abi: 'arm64-v8a',
             apkName: process.env.APK_NAME,

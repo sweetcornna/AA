@@ -73,7 +73,7 @@ export function resolveSupabaseConfiguration(
 
   const canonicalUrl = parsed.origin;
 
-  if (/^sb_publishable_[A-Za-z0-9_-]+$/.test(publishableKey)) {
+  if (/^sb_publishable_[A-Za-z0-9_-]{16,}$/.test(publishableKey)) {
     return { configuration: { url: canonicalUrl, publishableKey }, error: null };
   }
 

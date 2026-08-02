@@ -51,6 +51,7 @@ playwright-report/
 test-results/
 
 # local tooling artifacts
+.artifacts/
 .claude/
 .playwright-mcp/
 __pycache__/

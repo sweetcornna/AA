@@ -14,7 +14,7 @@ FORBIDDEN_TRACKED = {
 FORBIDDEN_SUFFIXES = {".jks", ".keystore", ".p12", ".pfx", ".pem", ".key"}
 PRIVATE_KEY = re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")
 SECRET_ASSIGNMENT = re.compile(
-    rb"^(?:POSTGRES_PASSWORD|JWT_SECRET|SERVICE_ROLE_KEY|SMTP_PASS|OPENAI_API_KEY|ANDROID_(?:STORE|KEY)_PASSWORD)=(?!<|\$\{|\$|$)[^\r\n]+$",
+    rb"^(?:POSTGRES_PASSWORD|JWT_SECRET|SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY|SMTP_PASS|OPENAI_API_KEY|ANDROID_(?:STORE|KEY)_PASSWORD)=(?!<|\$\{|\$|$)[^\r\n]+$",
     re.MULTILINE,
 )
 SECRET_TOKEN = re.compile(rb"(?:sb_secret_[A-Za-z0-9._-]{16,}|service_role[^\r\n]{0,20}eyJ[A-Za-z0-9_-]{20,})", re.I)
@@ -114,19 +114,22 @@ def check_release(failures: list[str]) -> None:
         "environment: production-publish",
         "candidate_run_id:",
         "expected_apk_sha256:",
-        "[[ \"$TAG\" == \"v0.0.3\" ]]",
+        "[[ \"$TAG\" == \"v0.0.4\" ]]",
         "[[ \"$GITHUB_REF\" == \"refs/tags/$TAG\" ]]",
         "[[ \"$GITHUB_SHA\" == \"$sha\" ]]",
         "! grep -q '<REQUIRED>' docs/PRIVACY.md",
         "version_code=\"${version_contract[1]}\"",
-        "[[ \"$version\" == \"0.0.3\" ]]",
-        "[[ \"$version_code\" == \"3\" ]]",
+        "[[ \"$version\" == \"0.0.4\" ]]",
+        "[[ \"$version_code\" == \"4\" ]]",
         "AA_ANDROID_EXPECTED_VERSION_CODE:",
-        "schemaVersion: 2",
+        "schemaVersion: 3",
+        "publishableKeySha256:",
         "versionCode: Number(process.env.VERSION_CODE)",
         "EXPECTED_VERSION_CODE:",
         "versionCode: Number(process.env.EXPECTED_VERSION_CODE)",
         "candidate-metadata.json",
+        "AA_HOSTED_TARGETS_FILE: supabase/hosted-targets.example.json",
+        "EXPECTED_PRODUCTION_PUBLIC_KEY",
         "EXPECTED_CANDIDATE_RUN_ID",
         "EXPECTED_SOURCE_COMMIT",
         "'.head_sha'",
@@ -166,17 +169,17 @@ def check_release(failures: list[str]) -> None:
 
 def check_android_identity(failures: list[str]) -> None:
     config = json.loads((ROOT / "apps/app/src-tauri/tauri.conf.json").read_text())
-    if config.get("version") != "0.0.3":
-        failures.append("Tauri Android release version must be exactly 0.0.3")
+    if config.get("version") != "0.0.4":
+        failures.append("Tauri Android release version must be exactly 0.0.4")
     if config.get("identifier") != "com.aa.expense":
         failures.append("Tauri Android application ID must be exactly com.aa.expense")
-    if config.get("bundle", {}).get("android", {}).get("versionCode") != 3:
-        failures.append("Tauri Android versionCode must be exactly 3")
+    if config.get("bundle", {}).get("android", {}).get("versionCode") != 4:
+        failures.append("Tauri Android versionCode must be exactly 4")
 
     gradle = (ROOT / "apps/app/src-tauri/gen/android/app/build.gradle.kts").read_text()
     for value in (
-        'appVersionCode != 3 || appVersionName != "0.0.3"',
-        'throw GradleException("Release version must be 0.0.3 (versionCode 3)")',
+        'appVersionCode != 4 || appVersionName != "0.0.4"',
+        'throw GradleException("Release version must be 0.0.4 (versionCode 4)")',
         "versionCode = appVersionCode",
         "versionName = appVersionName",
     ):
@@ -186,7 +189,7 @@ def check_android_identity(failures: list[str]) -> None:
     verifier = (ROOT / "scripts/android-verify-apk.sh").read_text()
     for value in (
         "AA_ANDROID_EXPECTED_VERSION_CODE",
-        '[[ "$AA_ANDROID_EXPECTED_VERSION_CODE" != "3" ]]',
+        '[[ "$AA_ANDROID_EXPECTED_VERSION_CODE" != "4" ]]',
         "bundle.android.versionCode",
         '[[ "$VERSION_CODE" == "$AA_ANDROID_EXPECTED_VERSION_CODE" ]]',
     ):

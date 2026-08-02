@@ -270,10 +270,12 @@ services:
       KONG_PROXY_ERROR_LOG: /dev/stderr
       SUPABASE_ANON_KEY: ${ANON_KEY:?ANON_KEY is required}
       SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY:?SERVICE_ROLE_KEY is required}
-      SUPABASE_PUBLISHABLE_KEY: ""
-      SUPABASE_SECRET_KEY: ""
-      ANON_KEY_ASYMMETRIC: ""
-      SERVICE_ROLE_KEY_ASYMMETRIC: ""
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?SUPABASE_PUBLISHABLE_KEY is required}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:?SUPABASE_SECRET_KEY is required}
+      # The pinned upstream entrypoint translates opaque external keys to these
+      # already-validated internal role JWTs before proxying requests.
+      ANON_KEY_ASYMMETRIC: ${ANON_KEY:?ANON_KEY is required}
+      SERVICE_ROLE_KEY_ASYMMETRIC: ${SERVICE_ROLE_KEY:?SERVICE_ROLE_KEY is required}
     entrypoint: [/bin/sh, /home/kong/kong-entrypoint.sh]
     healthcheck:
       test: [CMD, kong, health]

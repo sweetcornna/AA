@@ -64,6 +64,7 @@ def main() -> None:
     parser.add_argument("--profile", choices=("dual-stack", "single-stack"), default="dual-stack")
     parser.add_argument("--fingerprint", required=True)
     parser.add_argument("--smtp-admin-email", required=True)
+    parser.add_argument("--publishable-key", required=True)
     parser.add_argument("--provider-secrets", required=True, type=Path)
     parser.add_argument("--backup-recipient", required=True)
     parser.add_argument("--destination", choices=BACKUP_DESTINATIONS, default="azure-blob")
@@ -77,6 +78,8 @@ def main() -> None:
         raise SystemExit("fingerprint must be a lowercase SHA-256")
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", args.smtp_admin_email):
         raise SystemExit("SMTP admin email is invalid")
+    if not re.fullmatch(r"sb_publishable_[A-Za-z0-9_-]{16,}", args.publishable_key):
+        raise SystemExit("publishable key must be a non-placeholder sb_publishable_ key")
     if not re.fullmatch(r"age1[0-9a-z]{40,}", args.backup_recipient):
         raise SystemExit("backup recipient must be an age public recipient")
     if args.destination == "azure-blob" and (args.azure_storage_account is None or args.azure_storage_container is None):
@@ -111,6 +114,8 @@ def main() -> None:
         "JWT_SECRET": jwt_secret,
         "ANON_KEY": jwt(jwt_secret, "anon"),
         "SERVICE_ROLE_KEY": jwt(jwt_secret, "service_role"),
+        "SUPABASE_PUBLISHABLE_KEY": args.publishable_key,
+        "SUPABASE_SECRET_KEY": f"sb_secret_{secrets.token_urlsafe(48)}",
         "SECRET_KEY_BASE": secrets.token_urlsafe(72),
         "REALTIME_DB_ENC_KEY": secrets.token_hex(8),
         "SMTP_HOST": "smtp.resend.com",

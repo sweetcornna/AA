@@ -139,13 +139,35 @@ sudo python3 infra/supabase-selfhost/scripts/generate-env.py \
   --destination local \
   --fingerprint <64-HEX-SOURCE-FINGERPRINT> \
   --smtp-admin-email <VERIFIED-PRODUCTION-SENDER> \
+  --publishable-key <ENVIRONMENT-SPECIFIC-SB-PUBLISHABLE-KEY> \
   --provider-secrets <ROOT-ONLY-PRODUCTION-PROVIDER-JSON> \
   --backup-recipient <AGE-PUBLIC-RECIPIENT>
 ```
 
 `--destination` 只接受 `local` 或 `azure-blob`；`azure-blob` 是默认值。选择默认 Azure 模式时，仍必须同时提供 `--azure-storage-account <STORAGE-ACCOUNT>` 和 `--azure-storage-container <PRODUCTION-CONTAINER>`；local 模式会把 `BACKUP_DESTINATION=local` 写入 env，且不要求或伪造 Azure 配置。
 
-校验：
+已有 deployment 不得重新运行 generator，因为它会生成新的数据库/JWT 等 credential。升级旧 `stack.env` 时，先停止变更并备份原文件，然后在批准的新 source checkout 中计算 fingerprint、准备 upstream 并构建对应 immutable artifacts：
+
+```bash
+fingerprint="$(node scripts/hosted-deployment.mjs fingerprint | \
+  node -e "let v='';process.stdin.on('data',c=>v+=c);process.stdin.on('end',()=>process.stdout.write(JSON.parse(v).bundleSha256))")"
+sudo infra/supabase-selfhost/scripts/prepare-upstream.sh /srv/aa/production/runtime
+sudo infra/supabase-selfhost/scripts/build-functions.sh /srv/aa/production/runtime
+sudo python3 infra/supabase-selfhost/scripts/migrate-gateway-keys.py \
+  /srv/aa/production/stack.env \
+  /srv/aa/production/stack.env.migrated \
+  --fingerprint "$fingerprint" \
+  --publishable-key <EXACT-KEY-ALREADY-CONFIGURED-FOR-THE-CLIENT>
+sudo python3 infra/supabase-selfhost/scripts/validate-env.py \
+  /srv/aa/production/stack.env.migrated \
+  --profile single-stack \
+  --destination local \
+  --require-root-owner
+```
+
+migration 脚本拒绝覆盖输入/输出，保留既有 credential 与其他配置，只更新 `AA_SOURCE_FINGERPRINT`、`AA_FUNCTIONS_DIR`、`AA_TEMPLATE_DIR` 指向刚验证的 artifacts，并在 `SERVICE_ROLE_KEY` 后加入 public key 和新生成的 `sb_secret_*`。逐项确认 diff 仅包含这五项预期变化后，先运行 `sudo infra/supabase-selfhost/scripts/compose.sh --profile single-stack /srv/aa/production/stack.env.migrated config` 验证新 env/upstream/artifacts，才可在独立生产变更审批下原子替换 `stack.env` 并重建 Kong；本轮代码修复不执行该操作。
+
+新生成或迁移后的 env 均须校验：
 
 ```bash
 sudo python3 infra/supabase-selfhost/scripts/validate-env.py \
@@ -159,7 +181,7 @@ single-stack 不调用 `validate-pair.py`，因为没有 pair。该跳过明确�
 
 env 文件必须 root-owned `0600`，不得提交或上传。APK 只获得 production origin 和 anon/public key；service-role、JWT、SMTP 和 OpenAI 永不进入 `VITE_*`。
 
-当前 stack 使用固定 Supabase 上游仍支持的 legacy HS256 anon/service JWT。它们分别具有 `anon` 与 `service_role` claim，并由 validator 校验签名。迁移到非对称 JWT/opaque API keys 必须单独设计、轮换和验收，不能只改一个客户端 key。
+当前 stack 同时保留 legacy HS256 anon/service JWT，并在 Kong 登记环境绑定的 opaque `sb_publishable_*` / `sb_secret_*` key。pinned upstream entrypoint 会把 opaque key 转换为已验证的内部 `anon` / `service_role` JWT；validator 同时校验两类 credential，staging 与 production 不得复用。`sb_secret_*` 只允许存在于 root-owned `0600` runtime env，绝不能进入 `VITE_*`、APK、日志或 evidence。
 
 ## 容量与启动
 
