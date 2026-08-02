@@ -20,6 +20,16 @@ export function requireProductionPublicKey(configuration) {
   }
 }
 
+// The gateway is what this probe verifies, not the database. Migration 0009
+// revokes every public table privilege from anon, so a correctly translated key
+// still reaches PostgREST and is refused there. Only a Kong key-auth rejection,
+// which never carries a PostgREST error code, means the build key is unusable.
+async function reachedUpstream(response) {
+  if (response.ok) return true;
+  const body = await response.json().catch(() => null);
+  return typeof body?.code === "string";
+}
+
 async function request(fetchImpl, url, key) {
   return fetchImpl(url, {
     headers: {
@@ -43,7 +53,9 @@ export async function verifyProductionPublicKey({
     `${configuration.url}/rest/v1/profiles?select=id&limit=1`,
     configuration.publicKey,
   );
-  if (!rest.ok) throw new Error(`production publishable key REST probe failed with HTTP ${rest.status}`);
+  if (!(await reachedUpstream(rest))) {
+    throw new Error(`production publishable key REST probe was rejected by the gateway with HTTP ${rest.status}`);
+  }
 
   const invalid = await request(
     fetchImpl,
