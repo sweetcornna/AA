@@ -137,8 +137,9 @@ def check_release(failures: list[str]) -> None:
         "gh release create",
         "Refusing to modify existing release",
         "app-universal-release.apk",
-        "豁免真机验收",
-        "尚未在真机验证",
+        # notes 必须同时声明真机验收结论与仍未覆盖的范围，两者缺一不可。
+        "已在真机完成安装与注册验收",
+        "尚未广泛验证",
     )
     for value in required:
         if value not in source:
