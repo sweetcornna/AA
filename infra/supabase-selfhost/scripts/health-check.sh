@@ -42,11 +42,26 @@ probe_public_key() {
       printf '%s Auth health probe failed.\n' "$label" >&2
       return 1
     }
-  curl --fail --silent --show-error --max-time 5 \
-    "$origin/rest/v1/profiles?select=id&limit=1" -H "apikey: $key" >/dev/null || {
-      printf '%s REST probe failed.\n' "$label" >&2
+  # 0009_security_hardening.sql revokes every public table privilege from anon,
+  # so a correctly translated key still reaches PostgREST and is refused there
+  # with 42501. Only a Kong key-auth rejection, which carries no PostgREST error
+  # code, means the key itself is unusable.
+  local response http_status payload
+  response="$(curl --silent --show-error --max-time 5 --write-out '\n%{http_code}' \
+    "$origin/rest/v1/profiles?select=id&limit=1" -H "apikey: $key")" || {
+      printf '%s REST probe could not reach the gateway.\n' "$label" >&2
       return 1
     }
+  http_status="${response##*$'\n'}"
+  payload="${response%$'\n'*}"
+  if [[ "$http_status" == 2* ]]; then
+    return 0
+  fi
+  if [[ "$payload" == *'"code"'* ]]; then
+    return 0
+  fi
+  printf '%s REST probe was rejected by the gateway with HTTP %s.\n' "$label" "$http_status" >&2
+  return 1
 }
 
 probe_public_key "legacy public key" "$ANON_KEY"
