@@ -35,8 +35,26 @@ if missing or failures:
 PY
 
 origin="http://${AA_KONG_BIND_HOST}:${AA_KONG_HTTP_PORT}"
-curl --fail --silent --show-error --max-time 5 \
-  "$origin/auth/v1/health" -H "apikey: $ANON_KEY" >/dev/null
-curl --fail --silent --show-error --max-time 5 \
-  "$origin/rest/v1/profiles?select=id&limit=1" -H "apikey: $ANON_KEY" >/dev/null
-printf '%s stack is healthy on its loopback gateway.\n' "$AA_ENVIRONMENT"
+probe_public_key() {
+  local label="$1" key="$2"
+  curl --fail --silent --show-error --max-time 5 \
+    "$origin/auth/v1/health" -H "apikey: $key" >/dev/null || {
+      printf '%s Auth health probe failed.\n' "$label" >&2
+      return 1
+    }
+  curl --fail --silent --show-error --max-time 5 \
+    "$origin/rest/v1/profiles?select=id&limit=1" -H "apikey: $key" >/dev/null || {
+      printf '%s REST probe failed.\n' "$label" >&2
+      return 1
+    }
+}
+
+probe_public_key "legacy public key" "$ANON_KEY"
+probe_public_key "publishable key" "$SUPABASE_PUBLISHABLE_KEY"
+invalid_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 5 \
+  "$origin/auth/v1/health" -H "apikey: sb_publishable_invalid_health_probe")"
+if [[ "$invalid_status" != "401" ]]; then
+  printf 'invalid-key rejection probe returned HTTP %s instead of 401.\n' "$invalid_status" >&2
+  exit 1
+fi
+printf '%s stack is healthy for legacy and publishable public keys.\n' "$AA_ENVIRONMENT"

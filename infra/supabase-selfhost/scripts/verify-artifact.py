@@ -24,6 +24,7 @@ SOURCE_PATHS = [
     "scripts/hosted-deployment.mjs",
     "scripts/verify-backend.mjs",
     "scripts/verify-production-canary.mjs",
+    "scripts/verify-production-public-key.mjs",
     "supabase/config.toml",
     "supabase/functions",
     "supabase/migrations",

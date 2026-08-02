@@ -19,7 +19,8 @@ COMMON_REQUIRED = {
     "AA_ENVIRONMENT", "AA_STACK_ID", "AA_SOURCE_FINGERPRINT", "AA_RUNTIME_ROOT", "AA_UPSTREAM_DIR",
     "AA_FUNCTIONS_DIR", "AA_TEMPLATE_DIR", "AA_KONG_BIND_HOST", "AA_KONG_HTTP_PORT",
     "SUPABASE_PUBLIC_URL", "API_EXTERNAL_URL", "SITE_URL", "POSTGRES_PASSWORD", "JWT_SECRET",
-    "ANON_KEY", "SERVICE_ROLE_KEY", "SECRET_KEY_BASE", "REALTIME_DB_ENC_KEY", "SMTP_HOST",
+    "ANON_KEY", "SERVICE_ROLE_KEY", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY",
+    "SECRET_KEY_BASE", "REALTIME_DB_ENC_KEY", "SMTP_HOST",
     "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_ADMIN_EMAIL", "SMTP_SENDER_NAME", "OPENAI_API_KEY",
     "BACKUP_DIR", "BACKUP_AGE_RECIPIENT",
 }
@@ -131,6 +132,16 @@ def main() -> None:
         raise SystemExit("provider secret is too short")
     validate_jwt(values["ANON_KEY"], values["JWT_SECRET"], "anon")
     validate_jwt(values["SERVICE_ROLE_KEY"], values["JWT_SECRET"], "service_role")
+    if not re.fullmatch(r"sb_publishable_[A-Za-z0-9_-]{16,}", values["SUPABASE_PUBLISHABLE_KEY"]):
+        raise SystemExit("SUPABASE_PUBLISHABLE_KEY is invalid")
+    if not re.fullmatch(r"sb_secret_[A-Za-z0-9_-]{32,}", values["SUPABASE_SECRET_KEY"]):
+        raise SystemExit("SUPABASE_SECRET_KEY is invalid")
+    public_credentials = {
+        values["ANON_KEY"], values["SERVICE_ROLE_KEY"],
+        values["SUPABASE_PUBLISHABLE_KEY"], values["SUPABASE_SECRET_KEY"],
+    }
+    if len(public_credentials) != 4:
+        raise SystemExit("Supabase gateway credentials must all be distinct")
     if not re.fullmatch(r"age1[0-9a-z]{40,}", values["BACKUP_AGE_RECIPIENT"]):
         raise SystemExit("BACKUP_AGE_RECIPIENT is invalid")
     azure_keys = AZURE_REQUIRED & values.keys()

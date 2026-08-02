@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveSupabaseConfiguration } from "./supabaseConfiguration";
 
 const HOSTED_URL = "https://aa-api.cornna.xyz";
-const PUBLISHABLE_KEY = "sb_publishable_abc123";
+const PUBLISHABLE_KEY = `sb_publishable_${"p".repeat(32)}`;
 
 function legacyJwt(role: string): string {
   const encode = (value: object) => btoa(JSON.stringify(value)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
@@ -17,6 +17,13 @@ describe("Supabase client configuration", () => {
       configuration: { url: HOSTED_URL, publishableKey: PUBLISHABLE_KEY },
       error: null,
     });
+  });
+
+  it("rejects opaque publishable keys shorter than the deployment contract", () => {
+    expect(
+      resolveSupabaseConfiguration({ url: HOSTED_URL, publishableKey: `sb_publishable_${"p".repeat(15)}` }, true)
+        .error,
+    ).toMatch(/格式不正确/);
   });
 
   it("normalizes an allowed root URL to its canonical origin", () => {

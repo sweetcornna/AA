@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button, Card, GroupLabel, Hairline, Input, NavBar } from "../../components/ui";
-import { safeReturnPath } from "../../lib/authNavigation";
+import { authErrorMessage, safeReturnPath } from "../../lib/authNavigation";
 import { supabase } from "../../lib/supabase";
 
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
@@ -42,8 +42,7 @@ export function RegisterPage() {
       }
       navigate(returnTo, { replace: true });
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "注册失败";
-      setError(/rate limit|too many/i.test(message) ? "操作太频繁，请稍后再试" : message);
+      setError(authErrorMessage(cause, "register"));
     } finally {
       setBusy(false);
     }

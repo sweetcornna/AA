@@ -14,6 +14,7 @@ fi
 : "${AA_ANDROID_CERT_SHA256:?Set AA_ANDROID_CERT_SHA256 to the pinned release certificate SHA-256 fingerprint}"
 : "${AA_ANDROID_EXPECTED_VERSION_CODE:?Set AA_ANDROID_EXPECTED_VERSION_CODE to the approved Android versionCode}"
 : "${AA_ANDROID_PRODUCTION_ORIGIN:?Set AA_ANDROID_PRODUCTION_ORIGIN to https://aa-api.cornna.xyz}"
+: "${AA_ANDROID_PRODUCTION_PUBLIC_KEY:?Set AA_ANDROID_PRODUCTION_PUBLIC_KEY to the deployed sb_publishable_ key}"
 : "${AA_ANDROID_STAGING_ORIGIN:?Set AA_ANDROID_STAGING_ORIGIN to https://aa-staging-api.cornna.xyz}"
 
 EXPECTED_CERT="$(printf '%s' "$AA_ANDROID_CERT_SHA256" | tr '[:lower:]' '[:upper:]' | tr -d ':')"
@@ -25,12 +26,16 @@ if [[ "$AA_ANDROID_PRODUCTION_ORIGIN" != "https://aa-api.cornna.xyz" ]]; then
   echo "AA_ANDROID_PRODUCTION_ORIGIN must be exactly https://aa-api.cornna.xyz." >&2
   exit 1
 fi
+if [[ ! "$AA_ANDROID_PRODUCTION_PUBLIC_KEY" =~ ^sb_publishable_[A-Za-z0-9_-]{16,}$ ]]; then
+  echo "AA_ANDROID_PRODUCTION_PUBLIC_KEY must be an opaque publishable key." >&2
+  exit 1
+fi
 if [[ "$AA_ANDROID_STAGING_ORIGIN" != "https://aa-staging-api.cornna.xyz" ]]; then
   echo "AA_ANDROID_STAGING_ORIGIN must be exactly https://aa-staging-api.cornna.xyz." >&2
   exit 1
 fi
-if [[ "$AA_ANDROID_EXPECTED_VERSION_CODE" != "3" ]]; then
-  echo "AA_ANDROID_EXPECTED_VERSION_CODE must be exactly 3 for version 0.0.3." >&2
+if [[ "$AA_ANDROID_EXPECTED_VERSION_CODE" != "4" ]]; then
+  echo "AA_ANDROID_EXPECTED_VERSION_CODE must be exactly 4 for version 0.0.4." >&2
   exit 1
 fi
 
@@ -74,7 +79,7 @@ VERSION_NAME="$(printf '%s\n' "$BADGING" | grep -o "versionName='[^']*'" | head 
 VERSION_CODE="$(printf '%s\n' "$BADGING" | grep -o "versionCode='[^']*'" | head -1 | cut -d"'" -f2)"
 CONFIG_VERSION="$(node -e "const fs = require('node:fs'); console.log(JSON.parse(fs.readFileSync(process.argv[1], 'utf8')).version)" "$ROOT_DIR/apps/app/src-tauri/tauri.conf.json")"
 CONFIG_VERSION_CODE="$(node -e "const fs = require('node:fs'); console.log(JSON.parse(fs.readFileSync(process.argv[1], 'utf8')).bundle.android.versionCode)" "$ROOT_DIR/apps/app/src-tauri/tauri.conf.json")"
-[[ "$CONFIG_VERSION" == "0.0.3" ]] || { echo "Tauri release version must be exactly 0.0.3." >&2; exit 1; }
+[[ "$CONFIG_VERSION" == "0.0.4" ]] || { echo "Tauri release version must be exactly 0.0.4." >&2; exit 1; }
 [[ "$CONFIG_VERSION_CODE" == "$AA_ANDROID_EXPECTED_VERSION_CODE" ]] || { echo "Tauri Android versionCode $CONFIG_VERSION_CODE does not match expected $AA_ANDROID_EXPECTED_VERSION_CODE." >&2; exit 1; }
 [[ "$VERSION_NAME" == "$CONFIG_VERSION" ]] || { echo "APK version $VERSION_NAME does not match Tauri version $CONFIG_VERSION." >&2; exit 1; }
 [[ "$VERSION_CODE" == "$AA_ANDROID_EXPECTED_VERSION_CODE" ]] || { echo "APK versionCode $VERSION_CODE does not match expected $AA_ANDROID_EXPECTED_VERSION_CODE." >&2; exit 1; }
@@ -164,6 +169,7 @@ if command -v brotli >/dev/null; then
   brotli -d -c "$RUNTIME_BUNDLE" > "$DECOMPRESSED_BUNDLE"
   require_text "$(<"$DECOMPRESSED_BUNDLE")" "invalid build origin marker" "APK does not contain the production Supabase origin marker."
   require_text "$(<"$DECOMPRESSED_BUNDLE")" "$AA_ANDROID_PRODUCTION_ORIGIN" "APK does not contain the expected production Supabase origin."
+  require_text "$(<"$DECOMPRESSED_BUNDLE")" "$AA_ANDROID_PRODUCTION_PUBLIC_KEY" "APK does not contain the deployed production publishable key."
   if grep -aF "$AA_ANDROID_STAGING_ORIGIN" "$DECOMPRESSED_BUNDLE" >/dev/null; then
     echo "APK contains the staging Supabase origin." >&2
     exit 1

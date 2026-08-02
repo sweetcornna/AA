@@ -57,6 +57,42 @@ function errorText(result) {
   return result.error?.message ?? "no error";
 }
 
+async function verifyPublicSignup() {
+  const email = `aa-${runId}-signup@example.invalid`;
+  const password = `Aa-${runId}-Signup!`;
+  const client = createClient(SUPABASE_URL, ANON, { auth: { persistSession: false, autoRefreshToken: false } });
+  const signup = await client.auth.signUp({
+    email,
+    password,
+    options: { data: { display_name: "verify-signup" } },
+  });
+  if (signup.data.user?.id) createdUsers.push(signup.data.user.id);
+  check(
+    "public signup returns an immediate session",
+    !signup.error && signup.data.user?.id === signup.data.session?.user?.id,
+    signup.error?.message,
+  );
+  if (signup.error || !signup.data.user || !signup.data.session) {
+    throw new Error(`public signup: ${signup.error?.message ?? "missing user or session"}`);
+  }
+
+  const userId = signup.data.user.id;
+  const profile = await client.from("profiles").select("id").eq("id", userId).maybeSingle();
+  check("public signup creates a profile", profile.data?.id === userId, profile.error?.message);
+  const signOut = await client.auth.signOut();
+  check("public signup session signs out", !signOut.error, signOut.error?.message);
+  const signIn = await client.auth.signInWithPassword({ email, password });
+  check(
+    "public signup account signs in with password",
+    !signIn.error && signIn.data.session?.user?.id === userId,
+    signIn.error?.message,
+  );
+  if (signIn.error || signIn.data.session?.user?.id !== userId) {
+    throw new Error(`public signup password sign-in: ${signIn.error?.message ?? "wrong user"}`);
+  }
+  await client.auth.signOut();
+}
+
 async function makeUser(tag) {
   const email = `aa-${runId}-${tag}@example.invalid`;
   const password = `Aa-${runId}-Password!`;
@@ -131,6 +167,7 @@ async function cleanup() {
 }
 
 async function main() {
+  await verifyPublicSignup();
   const owner = await makeUser("owner");
   const debtor = await makeUser("debtor");
   const outsider = await makeUser("outsider");

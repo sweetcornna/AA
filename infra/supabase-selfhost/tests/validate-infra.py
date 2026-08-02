@@ -240,6 +240,9 @@ def main() -> None:
     check("container_name:" not in source, "Compose must not pin container names")
     check("latest" not in source, "Compose must not use latest tags")
     check("VERIFY_JWT: \"true\"" in source, "Edge gateway JWT verification must be enabled")
+    check("GOTRUE_DISABLE_SIGNUP: \"false\"" in source, "email signup must be enabled")
+    check("GOTRUE_EXTERNAL_EMAIL_ENABLED: \"true\"" in source, "email auth must be enabled")
+    check("GOTRUE_MAILER_AUTOCONFIRM: \"true\"" in source, "signup must return an immediate session")
     check("GOTRUE_EXTERNAL_PHONE_ENABLED: \"false\"" in source, "phone auth must be disabled")
     check("GOTRUE_MFA_TOTP_ENROLL_ENABLED: \"false\"" in source, "TOTP MFA must be disabled")
     check("GOTRUE_MAILER_OTP_LENGTH: \"6\"" in source and "GOTRUE_MAILER_OTP_EXP: \"600\"" in source, "OTP contract mismatch")
@@ -452,6 +455,7 @@ def main() -> None:
             "python3", str(INFRA / "scripts/generate-env.py"), "staging", str(root / "symlink-provider.env"),
             "--fingerprint", fingerprint,
             "--smtp-admin-email", "aa-staging@cornna.xyz",
+            "--publishable-key", "sb_publishable_" + "s" * 32,
             "--provider-secrets", str(provider_symlink),
             "--backup-recipient", "age1" + "q" * 58,
             "--azure-storage-account", "aabackupaccount",
@@ -465,6 +469,7 @@ def main() -> None:
                 "python3", str(INFRA / "scripts/generate-env.py"), environment, str(env_path),
                 "--fingerprint", fingerprint,
                 "--smtp-admin-email", f"aa-{environment}@cornna.xyz",
+                "--publishable-key", "sb_publishable_" + ("s" if environment == "staging" else "p") * 32,
                 "--provider-secrets", str(provider),
                 "--backup-recipient", "age1" + ("q" if environment == "staging" else "r") * 58,
                 "--azure-storage-account", "aabackupaccount",
@@ -486,6 +491,7 @@ def main() -> None:
             "--profile", "single-stack",
             "--fingerprint", fingerprint,
             "--smtp-admin-email", "aa-staging@cornna.xyz",
+            "--publishable-key", "sb_publishable_" + "s" * 32,
             "--provider-secrets", str(provider_staging),
             "--backup-recipient", "age1" + "q" * 58,
             "--azure-storage-account", "aabackupaccount",
@@ -497,6 +503,7 @@ def main() -> None:
             "--profile", "single-stack",
             "--fingerprint", fingerprint,
             "--smtp-admin-email", "aa-production-local@cornna.xyz",
+            "--publishable-key", "sb_publishable_" + "l" * 32,
             "--provider-secrets", str(provider_production),
             "--backup-recipient", "age1" + "s" * 58,
         ])
@@ -507,6 +514,7 @@ def main() -> None:
             "--profile", "single-stack",
             "--fingerprint", fingerprint,
             "--smtp-admin-email", "aa-production-single@cornna.xyz",
+            "--publishable-key", "sb_publishable_" + "u" * 32,
             "--provider-secrets", str(provider_production),
             "--backup-recipient", "age1" + "s" * 58,
             "--azure-storage-account", "aabackupaccount",
@@ -523,6 +531,7 @@ def main() -> None:
             "--destination", "local",
             "--fingerprint", fingerprint,
             "--smtp-admin-email", "aa-production-local@cornna.xyz",
+            "--publishable-key", "sb_publishable_" + "l" * 32,
             "--provider-secrets", str(provider_production),
             "--backup-recipient", "age1" + "t" * 58,
         ], check=True, stdout=subprocess.DEVNULL)
@@ -530,6 +539,46 @@ def main() -> None:
         check(local_values["BACKUP_DESTINATION"] == "local", "local environment destination mismatch")
         check("AZURE_STORAGE_ACCOUNT" not in local_values, "local environment unexpectedly requires an Azure account")
         check("AZURE_STORAGE_CONTAINER" not in local_values, "local environment unexpectedly requires an Azure container")
+        check(local_values["SUPABASE_PUBLISHABLE_KEY"] == "sb_publishable_" + "l" * 32, "publishable key generation mismatch")
+        check(re.fullmatch(r"sb_secret_[A-Za-z0-9_-]{32,}", local_values["SUPABASE_SECRET_KEY"]) is not None, "secret key generation mismatch")
+
+        legacy_env = root / "legacy-production.env"
+        legacy_values = {
+            key: value for key, value in local_values.items()
+            if key not in {"SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY"}
+        }
+        legacy_env.write_text("".join(f"{key}={value}\n" for key, value in legacy_values.items()))
+        legacy_env.chmod(0o600)
+        migrated_env = root / "migrated-production.env"
+        migrated_fingerprint = "c" * 64
+        subprocess.run([
+            "python3", str(INFRA / "scripts/migrate-gateway-keys.py"),
+            str(legacy_env), str(migrated_env),
+            "--fingerprint", migrated_fingerprint,
+            "--publishable-key", "sb_publishable_" + "m" * 32,
+        ], check=True, stdout=subprocess.DEVNULL)
+        migrated_values = dict(line.split("=", 1) for line in migrated_env.read_text().splitlines())
+        replaced_keys = {"AA_SOURCE_FINGERPRINT", "AA_FUNCTIONS_DIR", "AA_TEMPLATE_DIR"}
+        for key, value in legacy_values.items():
+            if key not in replaced_keys:
+                check(migrated_values.get(key) == value, f"gateway migration changed existing {key}")
+        runtime_root = legacy_values["AA_RUNTIME_ROOT"].rstrip("/")
+        check(migrated_values["AA_SOURCE_FINGERPRINT"] == migrated_fingerprint, "gateway migration fingerprint mismatch")
+        check(migrated_values["AA_FUNCTIONS_DIR"] == f"{runtime_root}/functions/{migrated_fingerprint}", "gateway migration functions path mismatch")
+        check(migrated_values["AA_TEMPLATE_DIR"] == f"{runtime_root}/templates/{migrated_fingerprint}", "gateway migration template path mismatch")
+        check(migrated_values["SUPABASE_PUBLISHABLE_KEY"] == "sb_publishable_" + "m" * 32, "gateway migration publishable key mismatch")
+        check(re.fullmatch(r"sb_secret_[A-Za-z0-9_-]{32,}", migrated_values["SUPABASE_SECRET_KEY"]) is not None, "gateway migration secret key mismatch")
+        check(migrated_env.stat().st_mode & 0o777 == 0o600, "gateway migration output mode mismatch")
+        expect_failure([
+            "python3", str(INFRA / "scripts/migrate-gateway-keys.py"),
+            str(migrated_env), str(root / "second-migration.env"),
+            "--fingerprint", "d" * 64,
+            "--publishable-key", "sb_publishable_" + "n" * 32,
+        ])
+        subprocess.run([
+            "python3", str(INFRA / "scripts/validate-env.py"), str(migrated_env),
+            "--profile", "single-stack", "--destination", "local",
+        ], check=True, stdout=subprocess.DEVNULL)
         subprocess.run([
             "python3", str(INFRA / "scripts/validate-env.py"), str(local_production_env),
             "--profile", "single-stack",
@@ -588,6 +637,7 @@ def main() -> None:
             "python3", str(INFRA / "scripts/generate-env.py"), "staging", str(stale_fingerprint_env),
             "--fingerprint", "b" * 64,
             "--smtp-admin-email", "aa-staging@cornna.xyz",
+            "--publishable-key", "sb_publishable_" + "s" * 32,
             "--provider-secrets", str(provider_staging),
             "--backup-recipient", "age1" + "q" * 58,
             "--azure-storage-account", "aabackupaccount",
@@ -829,6 +879,12 @@ def main() -> None:
         and db_environment.get("PGPASSWORD") == values["POSTGRES_PASSWORD"],
         "fresh database bootstrap must give supabase_admin the configured database password",
     )
+    kong_environment = services["kong"]["environment"]
+    check(kong_environment["SUPABASE_PUBLISHABLE_KEY"] == values["SUPABASE_PUBLISHABLE_KEY"], "Kong publishable key mismatch")
+    check(kong_environment["SUPABASE_SECRET_KEY"] == values["SUPABASE_SECRET_KEY"], "Kong secret key mismatch")
+    check(kong_environment["ANON_KEY_ASYMMETRIC"] == values["ANON_KEY"], "Kong anon translation target mismatch")
+    check(kong_environment["SERVICE_ROLE_KEY_ASYMMETRIC"] == values["SERVICE_ROLE_KEY"], "Kong service translation target mismatch")
+    check("SUPABASE_SECRET_KEY" not in services["functions"]["environment"], "functions must not receive the gateway secret key")
     check(set(parsed.get("volumes", {})) == {"db-config", "db-data"}, "unexpected persistent volumes")
     networks = parsed.get("networks", {})
     check(set(networks) == {"backend", "egress", "gateway"}, "unexpected Compose networks")
@@ -976,6 +1032,34 @@ def main() -> None:
     check("18443" not in stream_map and "18444" not in stream_map, "AA SNI map reuses existing legacy ports")
 
     kong = (INFRA / "templates/kong/kong.yml").read_text()
+    consumers_block, _, _ = kong.partition("\nacls:")
+    anon_match = re.search(
+        r"(?ms)^  - username: anon\n    keyauth_credentials:\n(?P<credentials>(?:      - key: [^\n]+\n)+)",
+        consumers_block,
+    )
+    service_match = re.search(
+        r"(?ms)^  - username: service_role\n    keyauth_credentials:\n(?P<credentials>(?:      - key: [^\n]+\n)+)",
+        consumers_block,
+    )
+    check(anon_match is not None, "Kong anon consumer credentials are missing")
+    check(service_match is not None, "Kong service-role consumer credentials are missing")
+    anon_credentials = set(re.findall(r"- key: (\S+)", anon_match.group("credentials") if anon_match else ""))
+    service_credentials = set(re.findall(r"- key: (\S+)", service_match.group("credentials") if service_match else ""))
+    check(
+        anon_credentials == {"$SUPABASE_ANON_KEY", "$SUPABASE_PUBLISHABLE_KEY"},
+        "Kong anon consumer credential mapping mismatch",
+    )
+    check(
+        service_credentials == {"$SUPABASE_SERVICE_KEY", "$SUPABASE_SECRET_KEY"},
+        "Kong service-role consumer credential mapping mismatch",
+    )
+    for translation in (
+        "SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?SUPABASE_PUBLISHABLE_KEY is required}",
+        "SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:?SUPABASE_SECRET_KEY is required}",
+        "ANON_KEY_ASYMMETRIC: ${ANON_KEY:?ANON_KEY is required}",
+        "SERVICE_ROLE_KEY_ASYMMETRIC: ${SERVICE_ROLE_KEY:?SERVICE_ROLE_KEY is required}",
+    ):
+        check(translation in source, f"Kong opaque-key translation missing: {translation}")
     for forbidden in ("storage-v1", "dashboard", "meta-all", "graphql-v1", "analytics-v1", "mcp"):
         check(forbidden not in kong, f"forbidden Kong route present: {forbidden}")
     for required in ("/auth/v1/", "/rest/v1/", "/realtime/v1/", "/functions/v1/"):
