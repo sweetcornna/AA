@@ -51,11 +51,11 @@ APK 只允许包含 exact production HTTPS origin、public anon/publishable key 
 
 以下任一项为空都禁止公开 APK：
 
-- 数据控制者法定名称：GitHub 用户 `sweetcornna`（个人开发者，非注册法人实体）。AA 为个人非商业自用项目，仅供开发者本人与其邀请的少数熟人使用，不面向公众开放注册、不收费、不用于任何商业目的。
+- 数据控制者法定名称：GitHub 用户 `sweetcornna`（个人开发者，非注册法人实体）。AA 为个人非商业自用项目，预期仅供开发者本人与少数熟人使用，不收费、不用于任何商业目的。当前 APK 可由任何取得安装包的人使用邮箱自行注册，尚未实施邀请码或账号白名单；运营方应只向预期用户分发，并将开放注册视为已知访问控制限制。
 - 隐私联系邮箱/渠道：通过项目仓库 issue 提交：<https://github.com/sweetcornna/AA/issues>。涉及个人数据的请求请勿在公开 issue 中附带账号邮箱等信息，仅说明诉求类型，开发者会另行约定私下渠道核验身份。
 - 账号与账本数据删除申请方式和响应期限：用户可在应用内退出并请求删除，或通过上述 issue 渠道申请。开发者在核验身份后 **30 天内**删除该用户的账号、资料、圈子成员关系及其个人可识别的账目记录；因分账语义所限，他人圈子中已产生的分摊与结算金额会以匿名化形式保留以维持账目自洽。加密备份中的历史副本随 **30 天本地保留期**自然过期，不单独回溯删除。
 - production Azure subscription/region 与 Azure 数据处理条款确认：Azure 订阅 `0494e02f-d465-447e-b6b5-db27a0a65c0f`，资源组 `cornna_group`，VM `cornna`（`Standard_B2ats_v2`），区域 **Japan East**（已从 VM 实例元数据核实）。Microsoft 产品条款与数据保护附录见 <https://www.microsoft.com/licensing/terms/product/ForallOnlineServices/all> 与 <https://www.microsoft.com/licensing/docs/view/Microsoft-Products-and-Services-Data-Protection-Addendum-DPA>。**运营方须确认所签订阅协议版本并在此记录。**
 - Resend 数据处理与保留政策链接/版本：Data Processing Addendum（更新日期 2025-12-31）<https://resend.com/legal/dpa>；隐私政策 <https://resend.com/legal/privacy-policy>；子处理者清单 <https://resend.com/legal/subprocessors>。DPA Exhibit A 载明账户终止后 90 天内删除用户/收件人数据。**发布前须由运营方复核当时的最新版本日期。**
 - OpenAI ASR 数据处理与实际账户保留设置链接/版本：平台数据控制说明 <https://developers.openai.com/api/docs/guides/your-data>；企业隐私 <https://openai.com/enterprise-privacy/>。默认 API 输入/输出最多保留 30 天用于服务与滥用检测，之后删除（法律要求除外）；Zero Data Retention 需申请且仅限符合条件的端点与用例。**本项目当前未确认已获批 ZDR，因此按默认 30 天保留描述；不得声称零保留，除非运营方在实际账户设置中核实并在此记录。**
 - Azure Blob backup retention 与删除策略：**当前不使用 Azure Blob。** 该 VM 无 managed identity（IMDS 返回 `Identity not found`），备份运行于 local-only 模式：每次备份为 `pg_dump --format=custom` 直接管道进 age 加密（任何环节不写明文到磁盘），存放于服务器 `/srv/aa/backups/production`（root-only `0700`），本地保留 30 天。**已知风险：加密备份与数据库位于同一块磁盘，磁盘损坏将同时失去两者。** 当前缓解措施为将加密备份与离机 age 私钥另存于运营方本地，已实测可独立解密恢复。启用 Blob 后须在此记录容器名、retention/soft delete/versioning/immutability 策略与 managed identity 权限。
-- 生效日期与版本化变更记录：本说明自 **2026-08-01** 起适用于 v0.0.3。变更历史以本文件的 Git 提交记录为准：<https://github.com/sweetcornna/AA/commits/main/docs/PRIVACY.md>。重大变更将在新版本 Release notes 中说明。
+- 生效日期与版本化变更记录：本说明自 **2026-08-01** 起适用于 v0.0.3，并于 **2026-08-02** 更新以适用于 v0.0.4，明确记录当前邮箱开放注册及尚未实施邀请码/白名单的限制。变更历史以本文件的 Git 提交记录为准：<https://github.com/sweetcornna/AA/commits/main/docs/PRIVACY.md>。重大变更将在新版本 Release notes 中说明。
