@@ -10,6 +10,12 @@
 
 ## 📥 下载试用(给非开发者)
 
+> 🌐 **不想装东西?** 网页版已上线:**<https://sweetcornna.github.io/AA/>** ——
+> 手机、电脑浏览器直接打开即可。
+> ⚠️ 目前**还不能登录**:后端网关尚未放行网页版的跨域请求,点「登录」会提示
+> 「网络连接失败」。界面可以完整浏览,能登录的时间见
+> [网页版部署手册](docs/WEB_DEPLOYMENT.md)。
+
 > ⚠️ **当前是技术演示版(v0.0.2)。** 安装包能正常安装、打开,看到完整界面;但它**还没有连接公开的服务器**,所以暂时**无法注册 / 登录使用真实数据**。想完整体验记账功能,需要照着下面[「给开发者」](#-给开发者)一节自建一个后端。纯想看看长什么样,直接下载安装就行。
 
 **👉 [点这里到下载页面](https://github.com/sweetcornna/AA/releases/latest)**,在页面底部的 **Assets** 里,按你的电脑系统选对应文件:
@@ -188,7 +194,7 @@ AA/
 | macOS / Windows / Linux 桌面 | v0.0.2 技术演示 | 已有 | 不在本次发布范围 |
 | Android | v0.0.2 debug 演示 APK | release arm64 APK | 正式候选尚未发布；真机验收已豁免且不得声称通过 |
 | iOS | 无公开包 | 已有 | 不在本次发布范围 |
-| Web | 无公开托管版 | 已有 + GitHub Pages workflow | 尚未发布：待启用 Pages 并放行浏览器跨域，见 [网页版部署手册](docs/WEB_DEPLOYMENT.md) |
+| Web | [已上线](https://sweetcornna.github.io/AA/) | 已有 + GitHub Pages workflow | 站点可访问、界面完整；登录待网关放行跨域，见 [网页版部署手册](docs/WEB_DEPLOYMENT.md) |
 
 ---
 
