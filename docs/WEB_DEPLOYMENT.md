@@ -3,7 +3,7 @@
 网页版和五个原生端共用同一份 `apps/app` 代码。`vite build` 产出的 `apps/app/dist/`
 就是完整站点：纯静态、无服务端渲染、无 service worker。
 
-站点地址（Pages 启用后）：`https://sweetcornna.github.io/AA/`
+站点地址：<https://sweetcornna.github.io/AA/>（已上线）
 
 ## 构建契约
 
@@ -17,16 +17,14 @@
 相对 `base` 意味着同一份产物在 `/AA/`、根路径或自定义域名下都能直接用，
 换域名不必重新构建。
 
-## 一次性前置动作（需要 operator 操作，仓库脚本不会代劳）
+## 一次性前置动作
 
-这两项都还没做，**不做完网页版无法登录**：
+1. ~~**启用 Pages**~~ —— 已完成（`build_type=workflow`，自动创建的
+   `github-pages` 环境只允许 `main` 部署）。
 
-1. **启用 Pages**：仓库 Settings → Pages → Source 选 **GitHub Actions**。
-   （当前 `GET /repos/sweetcornna/AA/pages` 返回 404，即未启用；未启用时
-   workflow 的 `configure-pages` 步骤会直接失败。）
-
-2. **放行浏览器跨域**：自托管 Kong 的 CORS 白名单原先只有 Tauri 的三个源，
-   浏览器发来的 `https://sweetcornna.github.io` 不在其中。实测预检：
+2. **放行浏览器跨域** —— **未完成，网页版因此无法登录。**
+   自托管 Kong 的 CORS 白名单原先只有 Tauri 的三个源，浏览器发来的
+   `https://sweetcornna.github.io` 不在其中。实测预检：
 
    ```
    $ curl -i -X OPTIONS 'https://aa-api.cornna.xyz/auth/v1/token?grant_type=password' \
@@ -34,6 +32,16 @@
        -H 'Access-Control-Request-Method: POST'
    HTTP/2 200          # 无 access-control-allow-origin ⇒ 浏览器丢弃响应
    ```
+
+   已上线站点上的实际症状（Chrome 控制台）：
+
+   ```
+   Access to fetch at 'https://aa-api.cornna.xyz/auth/v1/token?grant_type=password'
+   from origin 'https://sweetcornna.github.io' has been blocked by CORS policy:
+   No 'Access-Control-Allow-Origin' header is present on the requested resource.
+   ```
+
+   界面上表现为登录按钮下方的「网络连接失败，请稍后重试」，不会白屏。
 
    `infra/supabase-selfhost/templates/kong/kong.yml` 的 `origins` 已补上该源，
    但**运行中的栈仍是旧配置**：需要按 `docs/HOSTED_DEPLOYMENT.md` 的既有流程把
@@ -50,9 +58,13 @@
 
 Actions → **Web** → Run workflow（只有手动触发，与本仓库其余发布路径一致）。
 
-流程：`npm ci` → 单测 → `configure-pages` → 构建 → 断言产物指向生产 origin 且不含
-secret 形态的 key → 上传 artifact → 部署。构建 job 绑定 `production` 环境，读取
-`PRODUCTION_SUPABASE_URL` / `PRODUCTION_SUPABASE_PUBLISHABLE_KEY` 两个变量。
+流程：`npm ci` → 单测 → `configure-pages` → 构建 → 断言产物指向生产 origin、且注入的
+publishable key 不是 secret 形态 → 上传 artifact → 部署。构建 job 绑定 `production`
+环境，读取 `PRODUCTION_SUPABASE_URL` / `PRODUCTION_SUPABASE_PUBLISHABLE_KEY` 两个变量。
+
+> 该断言检查的是**注入的取值**而不是产物文本。别改回整包 grep
+> `sb_secret_|service_role`：`supabaseConfiguration.ts` 里拒绝这类 key 的守卫代码
+> 本身就含这两个字面量，minify 后仍在包里，grep 必然命中自己。
 
 ## 本地验证
 
