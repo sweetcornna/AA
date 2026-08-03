@@ -60,12 +60,38 @@ sudo bash -c 'cd /srv/aa/src && bash infra/supabase-selfhost/scripts/health-chec
 回滚就是 checkout 回原 commit 再重启。**不要**为此重跑 `generate-env.py`：它会重铸
 JWT 凭据，让已发布的客户端全部失效。
 
-> ⚠️ **已知漂移**：本次只移动了源码检出并重启 Kong，没有重跑部署管线，所以
-> `/srv/aa/production/stack.env` 的 `AA_SOURCE_FINGERPRINT` 仍是旧 commit
-> `90aa0f1` 的 `b964c217…`，而源码现在是 `9d4b963`（指纹 `340c609c…`）。
-> 运行时无影响（Kong 不读它；`AA_TEMPLATE_DIR` / `AA_FUNCTIONS_DIR` 指向的旧目录
-> 内容与新 commit 一致，本次没改 templates 与 functions），但
-> `run-migrations.py` 会因指纹不匹配 fail-closed。下次正式部署重跑管线即自动对齐。
+> ⚠️ **只移动检出会造成指纹漂移**：这样改 Kong 不会更新
+> `/srv/aa/production/stack.env` 的 `AA_SOURCE_FINGERPRINT`。运行时无影响（Kong 不读它），
+> 但 `run-migrations.py` 会比对 `hosted-deployment.mjs fingerprint` 的 `bundleSha256`，
+> 不一致就 fail-closed，**下一次迁移会被挡住**。按下节步骤对齐。
+
+### 对齐 AA_SOURCE_FINGERPRINT
+
+只要 `SOURCE_PATHS`（`scripts/hosted-deployment.mjs:22`）里的文件变了，指纹就变 —— 它包含
+`scripts/verify-backend.mjs`、`docs/HOSTED_DEPLOYMENT.md` 和整个 `infra/supabase-selfhost`，
+所以**看似只改 app 代码的 PR 也可能改指纹**（本文件不在其中）。
+
+**不要用重跑 `generate-env.py` 的方式对齐**：它每次都重铸 `JWT_SECRET` / `ANON_KEY` /
+`SERVICE_ROLE_KEY` / `POSTGRES_PASSWORD`，已发布的客户端会全部 401；它还 `O_EXCL` 拒绝覆盖
+已有文件，所以"删掉再生成"更糟。
+
+```bash
+# 1. 检出目标 commit
+sudo bash -c 'cd /srv/aa/src && git fetch -q origin main && git checkout -q --detach <sha>'
+# 2. 幂等地物化新指纹的 functions/templates（需要服务器上的 Deno 2.9.1）
+sudo bash -c 'cd /srv/aa/src && bash infra/supabase-selfhost/scripts/build-functions.sh /srv/aa/production/runtime'
+# 3. 备份后，就地只改 stack.env 的三个键：AA_SOURCE_FINGERPRINT、
+#    AA_FUNCTIONS_DIR、AA_TEMPLATE_DIR，其余键不动，保持 root:root 0600
+# 4. 复验
+sudo bash -c 'cd /srv/aa/src && python3 infra/supabase-selfhost/scripts/validate-env.py \
+  /srv/aa/production/stack.env --profile single-stack --require-root-owner'
+```
+
+运行中的容器保留旧挂载，不受 `stack.env` 改动影响，所以纯迁移**不需要** `compose up -d`
+或重启任何容器；PostgREST 的 schema cache 也会自动发现新增的 RPC。
+
+2026-08-03 应用 `0013_activity_scope.sql` 时已按此对齐到 `02b11b6`
+（`b964c217…` → `cf16aa7f…`），当前无未决漂移。
 
 ## 发布
 
