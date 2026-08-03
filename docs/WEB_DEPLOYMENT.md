@@ -22,37 +22,50 @@
 1. ~~**启用 Pages**~~ —— 已完成（`build_type=workflow`，自动创建的
    `github-pages` 环境只允许 `main` 部署）。
 
-2. **放行浏览器跨域** —— **未完成，网页版因此无法登录。**
-   自托管 Kong 的 CORS 白名单原先只有 Tauri 的三个源，浏览器发来的
-   `https://sweetcornna.github.io` 不在其中。实测预检：
+2. ~~**放行浏览器跨域**~~ —— 已完成（2026-08-03）。Kong 的 CORS 白名单原先只有
+   Tauri 的三个源，浏览器发来的 `https://sweetcornna.github.io` 被丢弃，页面表现
+   为「网络连接失败，请稍后重试」。现已放行，实测：
 
    ```
    $ curl -i -X OPTIONS 'https://aa-api.cornna.xyz/auth/v1/token?grant_type=password' \
-       -H 'Origin: https://sweetcornna.github.io' \
-       -H 'Access-Control-Request-Method: POST'
-   HTTP/2 200          # 无 access-control-allow-origin ⇒ 浏览器丢弃响应
+       -H 'Origin: https://sweetcornna.github.io' -H 'Access-Control-Request-Method: POST'
+   access-control-allow-origin: https://sweetcornna.github.io
    ```
 
-   已上线站点上的实际症状（Chrome 控制台）：
-
-   ```
-   Access to fetch at 'https://aa-api.cornna.xyz/auth/v1/token?grant_type=password'
-   from origin 'https://sweetcornna.github.io' has been blocked by CORS policy:
-   No 'Access-Control-Allow-Origin' header is present on the requested resource.
-   ```
-
-   界面上表现为登录按钮下方的「网络连接失败，请稍后重试」，不会白屏。
-
-   `infra/supabase-selfhost/templates/kong/kong.yml` 的 `origins` 已补上该源，
-   但**运行中的栈仍是旧配置**：需要按 `docs/HOSTED_DEPLOYMENT.md` 的既有流程把
-   模板重新渲染到 `AA_TEMPLATE_DIR` 并 reload Kong（模板变更会改变
-   `AA_SOURCE_FINGERPRINT`，按该手册的 stop gates 走）。
-
-   改完后同一条 `curl` 应回显 `access-control-allow-origin: https://sweetcornna.github.io`。
+   Tauri 三个源仍在白名单内（已发布的 Android 包不受影响），未列出的源仍无
+   allow-origin 头。
 
    Realtime 走 WebSocket，不受 CORS 预检约束；Edge Functions 自身返回
    `Access-Control-Allow-Origin: *`（`supabase/functions/_shared/cors.ts`），
    但它们同样经 Kong，所以仍以 Kong 白名单为准。
+
+### 改 Kong 配置的实际路径
+
+Kong 容器把**服务器上的仓库检出**直接挂进去，不读 `AA_TEMPLATE_DIR` 的运行时副本：
+
+```
+/srv/aa/src/infra/supabase-selfhost/templates/kong/kong.yml → /home/kong/temp.yml (ro)
+```
+
+`kong-entrypoint.sh` 在启动时对它做环境变量替换后生成 `KONG_DECLARATIVE_CONFIG`，
+启动时**不校验 fingerprint**。所以改 Kong 配置 = 把 `/srv/aa/src` 移到目标 commit
+再 `docker restart aa-production-primary-kong-1`（约 16 秒恢复 healthy）：
+
+```bash
+sudo bash -c 'cd /srv/aa/src && git fetch -q origin main && git checkout -q $(git rev-parse origin/main)'
+sudo docker restart aa-production-primary-kong-1
+sudo bash -c 'cd /srv/aa/src && bash infra/supabase-selfhost/scripts/health-check.sh /srv/aa/production/stack.env'
+```
+
+回滚就是 checkout 回原 commit 再重启。**不要**为此重跑 `generate-env.py`：它会重铸
+JWT 凭据，让已发布的客户端全部失效。
+
+> ⚠️ **已知漂移**：本次只移动了源码检出并重启 Kong，没有重跑部署管线，所以
+> `/srv/aa/production/stack.env` 的 `AA_SOURCE_FINGERPRINT` 仍是旧 commit
+> `90aa0f1` 的 `b964c217…`，而源码现在是 `9d4b963`（指纹 `340c609c…`）。
+> 运行时无影响（Kong 不读它；`AA_TEMPLATE_DIR` / `AA_FUNCTIONS_DIR` 指向的旧目录
+> 内容与新 commit 一致，本次没改 templates 与 functions），但
+> `run-migrations.py` 会因指纹不匹配 fail-closed。下次正式部署重跑管线即自动对齐。
 
 ## 发布
 
@@ -97,8 +110,21 @@ cd /tmp/site && python3 -m http.server 8899
   原生壳不受影响。
 - **没有 service worker**：不可离线，不做后台更新。
 
+## 已验收（2026-08-03，线上站点，Chromium 桌面视口）
+
+注册 → 自动登录 → 建圈子 → 记一笔 ¥128.50 → 圈子详情正确显示「1 位成员 · 共
+¥128.50 账单」「已结清」→ 生成邀请链接得到
+`https://sweetcornna.github.io/AA/#/join?token=…` 且二维码编码同一链接。
+`health-check.sh` 在 Kong 重启后报告 production stack healthy。
+
+留下一个验收账号 `web-acceptance-20260803@cornna.xyz`（昵称「Web 验收账号」）
+及其「网页版验收」圈子和那笔账，未清理。
+
 ## 未覆盖
 
 - 未做 PWA 离线壳与安装引导（`manifest.webmanifest` 已就位，但无 SW）。
 - 未接自定义域名；换域名只需在 Pages 设置里配好，`VITE_WEB_ORIGIN` 会自动跟随。
-- 未做网页端的真机/多浏览器验收。
+- 只在 Chromium 桌面视口验收；未覆盖 Safari / 移动浏览器 / 真机。
+- 未验收邮箱验证码登录与 AI 功能——它们受托管栈的 SMTP / OpenAI 凭据限制，
+  与网页版本身无关（见 `docs/HOSTED_DEPLOYMENT.md`）。
+- 未验收两个账号之间的邀请加入与实时同步。
