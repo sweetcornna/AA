@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Card } from "../../components/ui";
 import { createInvitation } from "../../lib/api";
 import { inviteLink } from "../../lib/inviteLink";
+import { WEB_ORIGIN } from "../../lib/web";
 
 export function InviteSection({ circleId }: { circleId: string }) {
   const [link, setLink] = useState<string | null>(null);
@@ -11,7 +12,7 @@ export function InviteSection({ circleId }: { circleId: string }) {
 
   const gen = useMutation({
     mutationFn: () => createInvitation({ circleId }),
-    onSuccess: (inv) => setLink(inviteLink(inv.token)),
+    onSuccess: (inv) => setLink(inviteLink(inv.token, WEB_ORIGIN)),
   });
 
   async function copy() {
@@ -43,6 +44,11 @@ export function InviteSection({ circleId }: { circleId: string }) {
           <button className="h-[44px] w-full rounded-[12px] text-[16px] font-semibold text-white" style={{ background: "var(--blue)" }} onClick={copy}>
             {copied ? "已复制 ✓" : "复制链接"}
           </button>
+          <p className="text-center text-[12px] leading-relaxed" style={{ color: "var(--label2)" }}>
+            {link.startsWith("aa://")
+              ? "邀请链接只能在已安装 AA App 的设备上打开。"
+              : "对方用手机相机扫码，或直接打开链接即可加入。"}
+          </p>
         </div>
       )}
     </Card>

@@ -1,8 +1,13 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv } from "vite";
 import { resolveSupabaseConfiguration } from "./src/lib/supabaseConfiguration";
+import { resolveWebOrigin } from "./src/lib/webConfiguration";
 
 const host = process.env.TAURI_DEV_HOST;
+
+// The Tauri CLI exports this while running the bundled build; a bare `vite build`
+// is therefore the hosted web build.
+const nativeBuild = Boolean(process.env.TAURI_ENV_PLATFORM);
 
 // https://vitejs.dev/config/ — tuned for Tauri (fixed port, ignore src-tauri).
 export default defineConfig(({ command, mode }) => {
@@ -18,10 +23,16 @@ export default defineConfig(({ command, mode }) => {
     );
     if (result.error) throw new Error(`Supabase 配置错误：${result.error}`);
     process.env.VITE_SUPABASE_ORIGIN = result.configuration.url;
+
+    const web = resolveWebOrigin(env.VITE_WEB_ORIGIN);
+    if (web.error) throw new Error(`Web 站点配置错误：${web.error}`);
   }
 
   return {
     plugins: [react()],
+    // Relative asset URLs let one artifact serve from any path — GitHub Pages'
+    // project subpath included — while Tauri keeps loading from the shell root.
+    base: command === "build" && !nativeBuild ? "./" : "/",
     clearScreen: false,
     server: {
       port: 1420,

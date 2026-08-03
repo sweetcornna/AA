@@ -3,7 +3,8 @@ import { useEffect, useRef } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Button, IconTile, Spinner, Svg } from "../../components/ui";
 import { acceptInvitation } from "../../lib/api";
-import { isInviteToken } from "../../lib/inviteLink";
+import { inviteLink, isInviteToken } from "../../lib/inviteLink";
+import { isNativeShell } from "../../lib/web";
 
 export function JoinPage() {
   const [params] = useSearchParams();
@@ -56,7 +57,16 @@ export function JoinPage() {
       ) : null}
 
       <div className="absolute bottom-9 left-0 right-0 px-9 text-center text-[12px] leading-relaxed" style={{ color: "var(--placeholder)" }}>
-        邀请链接仅能在已安装 AA App 的设备上打开
+        {isNativeShell() ? (
+          "邀请链接仅能在已安装 AA App 的设备上打开"
+        ) : validToken ? (
+          <>
+            已安装 AA App？
+            <a href={inviteLink(validToken)} style={{ color: "var(--blue)" }}>
+              在 App 中打开
+            </a>
+          </>
+        ) : null}
       </div>
     </div>
   );

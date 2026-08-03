@@ -1,0 +1,68 @@
+name: Web
+
+# Publishing stays manual, like every other release path in this repository:
+# a push to main never mutates anything outside the repo on its own.
+on:
+  workflow_dispatch:
+
+# One deployment at a time; never cancel a run that is already publishing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build hosted web bundle
+    runs-on: ubuntu-latest
+    # Holds the public production origin and publishable key. The Vite build is
+    # fail-closed: a wrong origin or a secret-looking key aborts it.
+    environment: production
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unit + property tests
+        run: npm test
+      - id: pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - name: Build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.PRODUCTION_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
+          # Resolved from the repository's Pages settings, so a custom domain is
+          # picked up automatically. Invitation links are built from this.
+          VITE_WEB_ORIGIN: ${{ steps.pages.outputs.base_url }}
+        run: npm run build --workspace=@aa/app
+      - name: Assert the bundle targets the production origin
+        env:
+          EXPECTED_ORIGIN: https://aa-api.cornna.xyz
+        run: |
+          set -euo pipefail
+          grep -rqF "$EXPECTED_ORIGIN" apps/app/dist/assets
+          ! grep -rqE 'sb_secret_|service_role' apps/app/dist
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: apps/app/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5

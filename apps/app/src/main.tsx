@@ -7,7 +7,12 @@ import { AuthProvider } from "./features/auth/AuthProvider";
 import { DeepLinkBridge } from "./features/invitations/DeepLinkBridge";
 import { queryClient } from "./lib/queryClient";
 import { supabaseConfigurationError } from "./lib/supabase";
+import { isNativeShell } from "./lib/web";
 import "./index.css";
+
+// Lets the stylesheet frame the app column in a desktop browser without
+// touching how it renders inside the native shells.
+document.documentElement.dataset.platform = isNativeShell() ? "native" : "web";
 
 const buildSupabaseOrigin = import.meta.env.VITE_SUPABASE_ORIGIN;
 if (buildSupabaseOrigin && buildSupabaseOrigin.length < 1) {
