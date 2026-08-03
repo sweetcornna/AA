@@ -34,8 +34,8 @@ if [[ "$AA_ANDROID_STAGING_ORIGIN" != "https://aa-staging-api.cornna.xyz" ]]; th
   echo "AA_ANDROID_STAGING_ORIGIN must be exactly https://aa-staging-api.cornna.xyz." >&2
   exit 1
 fi
-if [[ "$AA_ANDROID_EXPECTED_VERSION_CODE" != "4" ]]; then
-  echo "AA_ANDROID_EXPECTED_VERSION_CODE must be exactly 4 for version 0.0.4." >&2
+if [[ "$AA_ANDROID_EXPECTED_VERSION_CODE" != "5" ]]; then
+  echo "AA_ANDROID_EXPECTED_VERSION_CODE must be exactly 5 for version 0.0.5." >&2
   exit 1
 fi
 
@@ -79,7 +79,7 @@ VERSION_NAME="$(printf '%s\n' "$BADGING" | grep -o "versionName='[^']*'" | head 
 VERSION_CODE="$(printf '%s\n' "$BADGING" | grep -o "versionCode='[^']*'" | head -1 | cut -d"'" -f2)"
 CONFIG_VERSION="$(node -e "const fs = require('node:fs'); console.log(JSON.parse(fs.readFileSync(process.argv[1], 'utf8')).version)" "$ROOT_DIR/apps/app/src-tauri/tauri.conf.json")"
 CONFIG_VERSION_CODE="$(node -e "const fs = require('node:fs'); console.log(JSON.parse(fs.readFileSync(process.argv[1], 'utf8')).bundle.android.versionCode)" "$ROOT_DIR/apps/app/src-tauri/tauri.conf.json")"
-[[ "$CONFIG_VERSION" == "0.0.4" ]] || { echo "Tauri release version must be exactly 0.0.4." >&2; exit 1; }
+[[ "$CONFIG_VERSION" == "0.0.5" ]] || { echo "Tauri release version must be exactly 0.0.5." >&2; exit 1; }
 [[ "$CONFIG_VERSION_CODE" == "$AA_ANDROID_EXPECTED_VERSION_CODE" ]] || { echo "Tauri Android versionCode $CONFIG_VERSION_CODE does not match expected $AA_ANDROID_EXPECTED_VERSION_CODE." >&2; exit 1; }
 [[ "$VERSION_NAME" == "$CONFIG_VERSION" ]] || { echo "APK version $VERSION_NAME does not match Tauri version $CONFIG_VERSION." >&2; exit 1; }
 [[ "$VERSION_CODE" == "$AA_ANDROID_EXPECTED_VERSION_CODE" ]] || { echo "APK versionCode $VERSION_CODE does not match expected $AA_ANDROID_EXPECTED_VERSION_CODE." >&2; exit 1; }

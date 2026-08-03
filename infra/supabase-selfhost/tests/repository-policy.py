@@ -117,13 +117,13 @@ def check_release(failures: list[str]) -> None:
         "environment: production-publish",
         "candidate_run_id:",
         "expected_apk_sha256:",
-        "[[ \"$TAG\" == \"v0.0.4\" ]]",
+        "[[ \"$TAG\" == \"v0.0.5\" ]]",
         "[[ \"$GITHUB_REF\" == \"refs/tags/$TAG\" ]]",
         "[[ \"$GITHUB_SHA\" == \"$sha\" ]]",
         "! grep -q '<REQUIRED>' docs/PRIVACY.md",
         "version_code=\"${version_contract[1]}\"",
-        "[[ \"$version\" == \"0.0.4\" ]]",
-        "[[ \"$version_code\" == \"4\" ]]",
+        "[[ \"$version\" == \"0.0.5\" ]]",
+        "[[ \"$version_code\" == \"5\" ]]",
         "AA_ANDROID_EXPECTED_VERSION_CODE:",
         "schemaVersion: 3",
         "publishableKeySha256:",
@@ -140,8 +140,10 @@ def check_release(failures: list[str]) -> None:
         "gh release create",
         "Refusing to modify existing release",
         "app-universal-release.apk",
-        # notes 必须同时声明真机验收结论与仍未覆盖的范围，两者缺一不可。
-        "已在真机完成安装与注册验收",
+        # notes 必须如实声明本版的真机验收结论与仍未覆盖的范围，两者缺一不可。
+        # v0.0.5 走 ANDROID_RELEASE.md 的「真机 QA 豁免」路径，所以这里钉的是
+        # 未验收的如实披露；哪个版本真做了真机验收，就把这两行一起改回去。
+        "本版未做真机验收",
         "尚未广泛验证",
     )
     for value in required:
@@ -173,17 +175,17 @@ def check_release(failures: list[str]) -> None:
 
 def check_android_identity(failures: list[str]) -> None:
     config = json.loads((ROOT / "apps/app/src-tauri/tauri.conf.json").read_text())
-    if config.get("version") != "0.0.4":
-        failures.append("Tauri Android release version must be exactly 0.0.4")
+    if config.get("version") != "0.0.5":
+        failures.append("Tauri Android release version must be exactly 0.0.5")
     if config.get("identifier") != "com.aa.expense":
         failures.append("Tauri Android application ID must be exactly com.aa.expense")
-    if config.get("bundle", {}).get("android", {}).get("versionCode") != 4:
-        failures.append("Tauri Android versionCode must be exactly 4")
+    if config.get("bundle", {}).get("android", {}).get("versionCode") != 5:
+        failures.append("Tauri Android versionCode must be exactly 5")
 
     gradle = (ROOT / "apps/app/src-tauri/gen/android/app/build.gradle.kts").read_text()
     for value in (
-        'appVersionCode != 4 || appVersionName != "0.0.4"',
-        'throw GradleException("Release version must be 0.0.4 (versionCode 4)")',
+        'appVersionCode != 5 || appVersionName != "0.0.5"',
+        'throw GradleException("Release version must be 0.0.5 (versionCode 5)")',
         "versionCode = appVersionCode",
         "versionName = appVersionName",
     ):
@@ -193,7 +195,7 @@ def check_android_identity(failures: list[str]) -> None:
     verifier = (ROOT / "scripts/android-verify-apk.sh").read_text()
     for value in (
         "AA_ANDROID_EXPECTED_VERSION_CODE",
-        '[[ "$AA_ANDROID_EXPECTED_VERSION_CODE" != "4" ]]',
+        '[[ "$AA_ANDROID_EXPECTED_VERSION_CODE" != "5" ]]',
         "bundle.android.versionCode",
         '[[ "$VERSION_CODE" == "$AA_ANDROID_EXPECTED_VERSION_CODE" ]]',
     ):

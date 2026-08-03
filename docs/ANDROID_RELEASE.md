@@ -1,6 +1,6 @@
 # Android 正式发布流程
 
-AA Android 永久使用 `com.aa.expense`，只发布 release 签名的 `arm64-v8a` APK。当前版本为 `0.0.4`、`versionCode=4`。公开的 v0.0.2 使用 debug 证书，因此首次正式版需要先卸载；此后不得更换 application ID 或永久 release certificate。
+AA Android 永久使用 `com.aa.expense`，只发布 release 签名的 `arm64-v8a` APK。当前版本为 `0.0.5`、`versionCode=5`。公开的 v0.0.2 使用 debug 证书，因此从它升级到首个正式版（v0.0.3）需要先卸载；v0.0.3 起共用同一 release certificate，v0.0.4 → v0.0.5 可直接覆盖安装。不得更换 application ID 或永久 release certificate。
 
 ## 发布边界
 
@@ -94,16 +94,16 @@ static verifier 检查：
 
 ## GitHub Actions：候选
 
-从 GitHub Actions 选择已存在且 immutable 的 `v0.0.4` tag ref，手动运行 `.github/workflows/release.yml`：
+从 GitHub Actions 选择已存在且 immutable 的 `v0.0.5` tag ref，手动运行 `.github/workflows/release.yml`：
 
 - `operation=candidate`
-- `tag=v0.0.4`（input 与 workflow run ref 必须指向同一 tag commit）
+- `tag=v0.0.5`（input 与 workflow run ref 必须指向同一 tag commit）
 - `backend_fingerprint=<accepted production bundle SHA-256>`
 - publish-only 输入全部留空。
 
 workflow 会：
 
-1. resolve exact tag commit，检查 `version=0.0.4`、`versionCode=4` 和 clean source，并拒绝 tag commit 的 `docs/PRIVACY.md` 仍含 `<REQUIRED>`；
+1. resolve exact tag commit，检查 `version=0.0.5`、`versionCode=5` 和 clean source，并拒绝 tag commit 的 `docs/PRIVACY.md` 仍含 `<REQUIRED>`；
 2. 重新计算 repository fingerprint，并与 input 及 protected `PRODUCTION_DEPLOYMENT_FINGERPRINT` 比较；
 3. 在 `production` environment 审批后临时恢复 keystore；
 4. 构建一次 signed arm64 APK；
@@ -136,7 +136,7 @@ metadata schema 3 只记录公开身份：repository、run ID、tag、commit、v
 
 ## GitHub Actions：发布同一候选
 
-再次从同一 `v0.0.4` tag ref 手动运行同一 workflow：
+再次从同一 `v0.0.5` tag ref 手动运行同一 workflow：
 
 - `operation=publish`
 - 相同 `tag`

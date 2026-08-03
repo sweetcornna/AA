@@ -187,10 +187,10 @@ AA/
 
 ### 平台状态
 
-| 平台 | 当前公开包 | 仓库构建路径 | v0.0.4 验收状态 |
+| 平台 | 当前公开包 | 仓库构建路径 | v0.0.5 验收状态 |
 |---|:---:|:---:|:---:|
 | macOS / Windows / Linux 桌面 | v0.0.2 技术演示 | 已有 | 不在本次发布范围 |
-| Android | v0.0.2 debug 演示 APK | release arm64 APK | 正式候选尚未发布；真机验收已豁免且不得声称通过 |
+| Android | v0.0.4 release APK | release arm64 APK | 走真机 QA 豁免路径：未做真机验收，Release notes 已如实披露 |
 | iOS | 无公开包 | 已有 | 不在本次发布范围 |
 | Web | [已上线](https://sweetcornna.github.io/AA/) | 已有 + GitHub Pages workflow | 站点可访问，登录链路已实测打通；未做多浏览器与真机广泛验收 |
 
@@ -199,6 +199,6 @@ AA/
 ## 说明
 
 - 本地 Supabase 的 anon key 是标准本地开发密钥(公开、非生产),`.env` 已被 `.gitignore` 排除,仓库只含 `.env.example` 占位符。
-- 当前公开 v0.0.2 是未注入公开后端的技术演示包。v0.0.4 只允许通过手动 `candidate` → `publish` 两阶段 workflow 发布：候选构建一次，publish 原样上传同一 APK；tag 本身不会自动发布。
+- 桌面端公开的 v0.0.2 是未注入公开后端的技术演示包。Android 正式版只允许通过手动 `candidate` → `publish` 两阶段 workflow 发布：候选构建一次，publish 原样上传同一 APK；tag 本身不会自动发布。
 - AI 解析走 Edge Function `parse-expense`；本地可配置受支持 provider，Azure 托管栈固定使用 server-side OpenAI 配置，未配置可用 key 时回退到规则解析。
 - 移动端构建踩过的坑(本机 JVM 的 AES-GCM intrinsic 导致 TLS 下载损坏、`npm run` 切 cwd 致 cargo 用错 toolchain 等)已固化进 `gradle.properties` / `rust-toolchain.toml` / `scripts/`。
