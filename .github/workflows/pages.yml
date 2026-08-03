@@ -45,10 +45,19 @@ jobs:
       - name: Assert the bundle targets the production origin
         env:
           EXPECTED_ORIGIN: https://aa-api.cornna.xyz
+          PUBLISHABLE_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
           grep -rqF "$EXPECTED_ORIGIN" apps/app/dist/assets
-          ! grep -rqE 'sb_secret_|service_role' apps/app/dist
+          # Check the injected value, not the bundle text: the client's own guard
+          # code contains the literals "sb_secret_" and "service_role" precisely
+          # because it exists to reject such keys, so grepping dist always matches.
+          case "$PUBLISHABLE_KEY" in
+            sb_secret_* | *service_role*)
+              echo "publishable key looks like a secret" >&2
+              exit 1
+              ;;
+          esac
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: apps/app/dist
