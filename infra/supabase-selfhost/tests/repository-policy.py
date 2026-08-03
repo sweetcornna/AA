@@ -20,9 +20,12 @@ SECRET_ASSIGNMENT = re.compile(
 SECRET_TOKEN = re.compile(rb"(?:sb_secret_[A-Za-z0-9._-]{16,}|service_role[^\r\n]{0,20}eyJ[A-Za-z0-9_-]{20,})", re.I)
 ACTION_PINS = {
     "actions/checkout": "11d5960a326750d5838078e36cf38b85af677262",
+    "actions/configure-pages": "983d7736d9b0ae728b81ab479565c72886d7745b",
+    "actions/deploy-pages": "cd2ce8fcbc39b97be8ca5fce6e763baed58fa128",
     "actions/setup-node": "49933ea5288caeca8642d1e84afbd3f7d6820020",
     "actions/setup-java": "c1e323688fd81a25caa38c78aa6df2d33d3e20d9",
     "actions/upload-artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+    "actions/upload-pages-artifact": "56afc609e74202658d3ffba0e8f6dda462b719fa",
     "android-actions/setup-android": "9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407",
     "denoland/setup-deno": "22d081ff2d3a40755e97629de92e3bcbfa7cf2ed",
     "dtolnay/rust-toolchain": "4cda84d5c5c54efe2404f9d843567869ab1699d4",

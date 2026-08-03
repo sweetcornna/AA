@@ -88,7 +88,12 @@ cp apps/app/.env.example apps/app/.env   # 填入 supabase start 输出的 URL /
 ```bash
 npm run dev  --workspace=@aa/app             # 浏览器开发
 npm run tauri --workspace=@aa/app -- dev     # 桌面原生窗口(需 Rust)
+npm run build --workspace=@aa/app            # 网页版静态产物 → apps/app/dist/
 ```
+
+网页版产物用相对 `base`,同一份 `dist/` 放在任意路径/域名下都能直接用;
+托管到 GitHub Pages 的 workflow 与尚未完成的前置动作见
+[网页版部署手册](docs/WEB_DEPLOYMENT.md)。
 
 ### 3) 手机端
 
@@ -183,7 +188,7 @@ AA/
 | macOS / Windows / Linux 桌面 | v0.0.2 技术演示 | 已有 | 不在本次发布范围 |
 | Android | v0.0.2 debug 演示 APK | release arm64 APK | 正式候选尚未发布；真机验收已豁免且不得声称通过 |
 | iOS | 无公开包 | 已有 | 不在本次发布范围 |
-| Web | 无公开托管版 | 已有 | 不在本次发布范围 |
+| Web | 无公开托管版 | 已有 + GitHub Pages workflow | 尚未发布：待启用 Pages 并放行浏览器跨域，见 [网页版部署手册](docs/WEB_DEPLOYMENT.md) |
 
 ---
 

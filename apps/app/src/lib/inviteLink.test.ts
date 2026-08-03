@@ -9,10 +9,21 @@ describe("invitation links", () => {
     expect(inviteLink(TOKEN)).toBe(`aa://join?token=${TOKEN}`);
   });
 
+  it("prefers the hosted web build so any browser can open the invitation", () => {
+    expect(inviteLink(TOKEN, "https://sweetcornna.github.io/AA/")).toBe(
+      `https://sweetcornna.github.io/AA/#/join?token=${TOKEN}`,
+    );
+    // A build without a hosted counterpart keeps the custom-scheme contract.
+    expect(inviteLink(TOKEN, null)).toBe(`aa://join?token=${TOKEN}`);
+  });
+
   it("rejects invalid generated tokens", () => {
     for (const token of ["", "short", `${TOKEN}x`, "abcdefghijklmnopqrstuv!@"]) {
       expect(isInviteToken(token)).toBe(false);
       expect(() => inviteLink(token)).toThrow("invalid invitation token");
+      expect(() => inviteLink(token, "https://sweetcornna.github.io/AA/")).toThrow(
+        "invalid invitation token",
+      );
     }
   });
 

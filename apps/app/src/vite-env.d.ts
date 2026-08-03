@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_ORIGIN?: string;
   /** Legacy local-project public key; new deployments use the publishable key. */
   readonly VITE_SUPABASE_ANON_KEY?: string;
+  /** Public URL of the hosted web build; invitations become shareable https links. */
+  readonly VITE_WEB_ORIGIN?: string;
   readonly TAURI_ENV_PLATFORM?: string;
 }
 

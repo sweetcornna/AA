@@ -80,6 +80,26 @@ body {
     inset 0 0.5px 0 rgba(255, 255, 255, 0.35);
 }
 
+/* ===== Hosted web build on a wide screen =====
+   Every page already lays itself out in a 448px (max-w-md) column, and both
+   fixed overlays are viewport-centred at the same width. On a desktop browser
+   that column would otherwise float on a flat background, so give it a surface
+   of its own. The native shells keep the edge-to-edge phone layout. */
+@media (min-width: 768px) {
+  :root[data-platform="web"] body {
+    background: #e4e4ea;
+  }
+
+  :root[data-platform="web"] #root {
+    max-width: 448px;
+    margin: 0 auto;
+    background: var(--bg);
+    box-shadow:
+      0 0 0 0.5px var(--separator),
+      0 0 44px -14px rgba(0, 0, 0, 0.22);
+  }
+}
+
 @keyframes aaspin {
   to {
     transform: rotate(360deg);
