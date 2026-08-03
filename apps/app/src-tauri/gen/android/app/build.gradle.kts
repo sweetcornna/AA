@@ -18,8 +18,8 @@ val releaseSigningRequested = gradle.startParameter.taskNames.any {
 }
 val appVersionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
 val appVersionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
-if (releaseSigningRequested && (appVersionCode != 4 || appVersionName != "0.0.4")) {
-    throw GradleException("Release version must be 0.0.4 (versionCode 4)")
+if (releaseSigningRequested && (appVersionCode != 5 || appVersionName != "0.0.5")) {
+    throw GradleException("Release version must be 0.0.5 (versionCode 5)")
 }
 
 android {
