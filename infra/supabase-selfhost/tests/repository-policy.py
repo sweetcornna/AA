@@ -140,8 +140,10 @@ def check_release(failures: list[str]) -> None:
         "gh release create",
         "Refusing to modify existing release",
         "app-universal-release.apk",
-        # notes 必须同时声明真机验收结论与仍未覆盖的范围，两者缺一不可。
-        "已在真机完成安装与注册验收",
+        # notes 必须如实声明本版的真机验收结论与仍未覆盖的范围，两者缺一不可。
+        # v0.0.5 走 ANDROID_RELEASE.md 的「真机 QA 豁免」路径，所以这里钉的是
+        # 未验收的如实披露；哪个版本真做了真机验收，就把这两行一起改回去。
+        "本版未做真机验收",
         "尚未广泛验证",
     )
     for value in required:

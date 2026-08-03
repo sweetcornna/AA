@@ -190,7 +190,7 @@ AA/
 | 平台 | 当前公开包 | 仓库构建路径 | v0.0.5 验收状态 |
 |---|:---:|:---:|:---:|
 | macOS / Windows / Linux 桌面 | v0.0.2 技术演示 | 已有 | 不在本次发布范围 |
-| Android | v0.0.4 release APK | release arm64 APK | 候选待构建；真机验收未做，不得声称通过 |
+| Android | v0.0.4 release APK | release arm64 APK | 走真机 QA 豁免路径：未做真机验收，Release notes 已如实披露 |
 | iOS | 无公开包 | 已有 | 不在本次发布范围 |
 | Web | [已上线](https://sweetcornna.github.io/AA/) | 已有 + GitHub Pages workflow | 站点可访问，登录链路已实测打通；未做多浏览器与真机广泛验收 |
 
