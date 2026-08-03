@@ -1,7 +1,7 @@
 import { formatMoney } from "@aa/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Avatar,
   Button,
@@ -33,14 +33,17 @@ const GroupGlyph = () => (
   </Svg>
 );
 
+type AddPanel = "closed" | "chooser" | "create";
+
 export function CirclesPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const circles = useQuery({ queryKey: ["circles"], queryFn: listMyCircles });
   const profile = useQuery({ queryKey: ["my-profile"], queryFn: getMyProfile });
   const balances = useQuery({ queryKey: ["my-balances"], queryFn: getMyBalances });
 
-  const [open, setOpen] = useState(false);
+  const [addPanel, setAddPanel] = useState<AddPanel>("closed");
   const [name, setName] = useState("");
   const [currency, setCurrency] = useState<string>("CNY");
 
@@ -48,7 +51,7 @@ export function CirclesPage() {
     mutationFn: () => createCircle({ name: name.trim(), currency }),
     onSuccess: () => {
       setName("");
-      setOpen(false);
+      setAddPanel("closed");
       qc.invalidateQueries({ queryKey: ["circles"] });
     },
   });
@@ -67,7 +70,16 @@ export function CirclesPage() {
       <header className="mb-3 flex items-center justify-between">
         <h1 className="text-[32px] font-bold tracking-[-0.022em]">圈子</h1>
         <div className="flex items-center gap-3.5">
-          <button onClick={() => setOpen((v) => !v)} aria-label="新建圈子">
+          <button
+            onClick={() =>
+              setAddPanel((panel) =>
+                panel === "closed" ? "chooser" : "closed",
+              )
+            }
+            aria-label="创建或加入圈子"
+            aria-expanded={addPanel !== "closed"}
+            aria-controls="circle-add-panel"
+          >
             <Plus />
           </button>
           <Link to="/profile">
@@ -76,22 +88,58 @@ export function CirclesPage() {
         </div>
       </header>
 
-      {open && (
-        <Card className="mb-4 p-4">
-          <div className="mb-2.5">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="圈子名称，如 周末旅行" autoFocus />
-          </div>
-          <Segmented
-            value={currency}
-            onChange={setCurrency}
-            options={CURRENCIES.map((c) => ({ value: c, label: c }))}
-          />
-          {create.error && <p className="mt-2 text-[13px]" style={{ color: "var(--red)" }}>{(create.error as Error).message}</p>}
-          <div className="mt-3 flex gap-2">
-            <Button disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>{create.isPending ? "创建中…" : "创建"}</Button>
-            <Button variant="ghost" className="px-4" onClick={() => setOpen(false)}>取消</Button>
-          </div>
-        </Card>
+      {addPanel === "chooser" && (
+        <div id="circle-add-panel">
+          <Card className="mb-4">
+            <button
+              type="button"
+              className="flex w-full items-center gap-3 px-4 py-3.5 text-left active:bg-black/5"
+              onClick={() => setAddPanel("create")}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-[16px] font-medium">新建圈子</div>
+                <div className="mt-px text-[13px]" style={{ color: "var(--label2)" }}>
+                  创建一个圈子并邀请朋友
+                </div>
+              </div>
+              <ChevronR />
+            </button>
+            <Hairline inset={16} />
+            <button
+              type="button"
+              className="flex w-full items-center gap-3 px-4 py-3.5 text-left active:bg-black/5"
+              onClick={() => navigate("/join")}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-[16px] font-medium">输入邀请码或链接</div>
+                <div className="mt-px text-[13px]" style={{ color: "var(--label2)" }}>
+                  加入朋友已经创建的圈子
+                </div>
+              </div>
+              <ChevronR />
+            </button>
+          </Card>
+        </div>
+      )}
+
+      {addPanel === "create" && (
+        <div id="circle-add-panel">
+          <Card className="mb-4 p-4">
+            <div className="mb-2.5">
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="圈子名称，如 周末旅行" autoFocus />
+            </div>
+            <Segmented
+              value={currency}
+              onChange={setCurrency}
+              options={CURRENCIES.map((c) => ({ value: c, label: c }))}
+            />
+            {create.error && <p className="mt-2 text-[13px]" style={{ color: "var(--red)" }}>{(create.error as Error).message}</p>}
+            <div className="mt-3 flex gap-2">
+              <Button disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>{create.isPending ? "创建中…" : "创建"}</Button>
+              <Button variant="ghost" className="px-4" onClick={() => setAddPanel("closed")}>取消</Button>
+            </div>
+          </Card>
+        </div>
       )}
 
       <Hero className="mb-[26px]">
@@ -156,9 +204,9 @@ export function CirclesPage() {
         </>
       ) : (
         <p className="mt-12 text-center text-[15px]" style={{ color: "var(--label2)" }}>
-          还没有圈子，点右上角 + 新建一个，
+          还没有圈子，点右上角 + 新建或加入，
           <br />
-          把朋友拉进来一起 AA 吧。
+          和朋友一起 AA 吧。
         </p>
       )}
     </div>

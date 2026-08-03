@@ -56,6 +56,7 @@ export function CircleDetailPage() {
       qc.invalidateQueries({ queryKey: ["balances", circleId] });
       qc.invalidateQueries({ queryKey: ["settlements", circleId] });
       qc.invalidateQueries({ queryKey: ["my-balances"] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
     },
   });
 
