@@ -23,7 +23,12 @@ export function ProfilePage() {
 
   const save = useMutation({
     mutationFn: () => updateMyProfile({ display_name: name.trim(), phone: phone.trim() || null }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["my-profile"] }),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["my-profile"] }),
+        qc.invalidateQueries({ queryKey: ["activity"] }),
+      ]);
+    },
   });
 
   if (profile.isLoading) return <Centered><Spinner /></Centered>;

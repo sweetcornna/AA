@@ -13,30 +13,32 @@ export function useCircleRealtime(circleId: string | undefined): void {
   useEffect(() => {
     if (!circleId) return;
     const filter = `circle_id=eq.${circleId}`;
-    const invalidate = (keys: string[]) =>
+    const invalidate = (keys: string[], activity = false) => {
       keys.forEach((k) => qc.invalidateQueries({ queryKey: [k, circleId] }));
+      if (activity) void qc.invalidateQueries({ queryKey: ["activity"] });
+    };
 
     const channel = supabase
       .channel(`circle:${circleId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "expenses", filter },
-        () => invalidate(["expenses", "balances"]),
+        () => invalidate(["expenses", "balances"], true),
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "expense_splits", filter },
-        () => invalidate(["balances"]),
+        () => invalidate(["balances"], true),
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "settlements", filter },
-        () => invalidate(["settlements", "balances"]),
+        () => invalidate(["settlements", "balances"], true),
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "circle_members", filter },
-        () => invalidate(["members", "balances"]),
+        () => invalidate(["members", "balances"], true),
       )
       .subscribe();
 

@@ -305,6 +305,199 @@ async function main() {
   const memberExpenses = await debtor.client.from("expenses").select("id").eq("circle_id", circleId);
   check("member still reads RPC-created expenses", !memberExpenses.error && (memberExpenses.data ?? []).length === 1, memberExpenses.error?.message);
 
+  await expectRejected(
+    "anonymous cannot call list_activity",
+    createClient(SUPABASE_URL, ANON, { auth: { persistSession: false } })
+      .rpc("list_activity", { p_scope: "all", p_limit: 25 }),
+  );
+  const outsiderActivity = await outsider.client.rpc("list_activity", { p_scope: "all", p_limit: 25 });
+  check(
+    "nonmember reads no circle activity",
+    !outsiderActivity.error && (outsiderActivity.data ?? []).length === 0,
+    outsiderActivity.error?.message,
+  );
+
+  const contenderMembership = await admin.from("circle_members").insert({
+    circle_id: circleId,
+    user_id: contender.id,
+    role: "member",
+  });
+  check("activity fixtures add another member", !contenderMembership.error, contenderMembership.error?.message);
+
+  const activityExpenses = await admin.from("expenses").insert([
+    {
+      circle_id: circleId,
+      payer_id: owner.id,
+      amount_minor: 100,
+      currency: "CNY",
+      description: "activity-unrelated-newest",
+      category: "测试",
+      spent_at: "2099-01-05",
+      split_type: "exact",
+      source: "manual",
+      created_by: owner.id,
+      created_at: "2099-01-05T00:00:00Z",
+    },
+    {
+      circle_id: circleId,
+      payer_id: owner.id,
+      amount_minor: 100,
+      currency: "CNY",
+      description: "activity-zero-split",
+      category: "测试",
+      spent_at: "2099-01-02",
+      split_type: "exact",
+      source: "manual",
+      created_by: owner.id,
+      created_at: "2099-01-02T00:00:00Z",
+    },
+    {
+      circle_id: circleId,
+      payer_id: debtor.id,
+      amount_minor: 200,
+      currency: "CNY",
+      description: "activity-payer",
+      category: "测试",
+      spent_at: "2099-01-01",
+      split_type: "exact",
+      source: "manual",
+      created_by: owner.id,
+      created_at: "2099-01-01T00:00:00Z",
+    },
+    {
+      circle_id: circleId,
+      payer_id: owner.id,
+      amount_minor: 300,
+      currency: "CNY",
+      description: "activity-creator",
+      category: "测试",
+      spent_at: "2098-12-31",
+      split_type: "exact",
+      source: "manual",
+      created_by: debtor.id,
+      created_at: "2098-12-31T00:00:00Z",
+    },
+    {
+      circle_id: circleId,
+      payer_id: outsider.id,
+      amount_minor: 400,
+      currency: "CNY",
+      description: "activity-hidden-profile",
+      category: "测试",
+      spent_at: "2098-12-30",
+      split_type: "exact",
+      source: "manual",
+      created_by: owner.id,
+      created_at: "2098-12-30T00:00:00Z",
+    },
+  ]).select("id, description");
+  check(
+    "activity expense fixtures created",
+    !activityExpenses.error && (activityExpenses.data ?? []).length === 5,
+    activityExpenses.error?.message,
+  );
+  const activityExpenseIds = Object.fromEntries(
+    (activityExpenses.data ?? []).map((row) => [row.description, row.id]),
+  );
+  const activitySplits = await admin.from("expense_splits").insert([
+    { expense_id: activityExpenseIds["activity-unrelated-newest"], circle_id: circleId, user_id: owner.id, owed_minor: 100 },
+    { expense_id: activityExpenseIds["activity-zero-split"], circle_id: circleId, user_id: owner.id, owed_minor: 100 },
+    { expense_id: activityExpenseIds["activity-zero-split"], circle_id: circleId, user_id: debtor.id, owed_minor: 0 },
+    { expense_id: activityExpenseIds["activity-payer"], circle_id: circleId, user_id: owner.id, owed_minor: 200 },
+    { expense_id: activityExpenseIds["activity-creator"], circle_id: circleId, user_id: owner.id, owed_minor: 300 },
+    { expense_id: activityExpenseIds["activity-hidden-profile"], circle_id: circleId, user_id: owner.id, owed_minor: 400 },
+  ]);
+  check("activity split fixtures created", !activitySplits.error, activitySplits.error?.message);
+
+  const activitySettlements = await admin.from("settlements").insert([
+    {
+      circle_id: circleId,
+      from_user: owner.id,
+      to_user: contender.id,
+      amount_minor: 50,
+      currency: "CNY",
+      settled_at: "2099-01-04T00:00:00Z",
+      created_by: owner.id,
+    },
+    {
+      circle_id: circleId,
+      from_user: owner.id,
+      to_user: contender.id,
+      amount_minor: 60,
+      currency: "CNY",
+      settled_at: "2098-12-29T00:00:00Z",
+      created_by: debtor.id,
+    },
+  ]).select("id, amount_minor");
+  check(
+    "activity settlement fixtures created",
+    !activitySettlements.error && (activitySettlements.data ?? []).length === 2,
+    activitySettlements.error?.message,
+  );
+  const creatorOnlySettlement = (activitySettlements.data ?? [])
+    .find((row) => Number(row.amount_minor) === 60)?.id;
+
+  const debtorAll = await debtor.client.rpc("list_activity", { p_scope: "all", p_limit: 100 });
+  const debtorMine = await debtor.client.rpc("list_activity", { p_scope: "mine", p_limit: 100 });
+  const allRows = debtorAll.data ?? [];
+  const mineRows = debtorMine.data ?? [];
+  const allDescriptions = new Set(allRows.map((row) => row.description).filter(Boolean));
+  const mineDescriptions = new Set(mineRows.map((row) => row.description).filter(Boolean));
+  check("member sees unrelated expense in all", !debtorAll.error && allDescriptions.has("activity-unrelated-newest"), debtorAll.error?.message);
+  check("mere membership does not include expense in mine", !debtorMine.error && !mineDescriptions.has("activity-unrelated-newest"), debtorMine.error?.message);
+  check("positive split includes expense in mine", mineDescriptions.has("火锅"));
+  check("zero split includes expense in mine", mineDescriptions.has("activity-zero-split"));
+  check("payer includes expense in mine", mineDescriptions.has("activity-payer"));
+  check("creator includes expense in mine", mineDescriptions.has("activity-creator"));
+  check(
+    "zero split amount remains distinct",
+    mineRows.find((row) => row.description === "activity-zero-split")?.my_owed_minor === 0,
+  );
+  check(
+    "activity role overlap does not duplicate rows",
+    mineRows.filter((row) => row.description === "火锅").length === 1,
+  );
+  check(
+    "settlement sender and recipient are included in mine",
+    mineRows.some((row) => row.id === settlement.data?.id),
+  );
+  check(
+    "legacy settlement creator is included in mine",
+    Boolean(creatorOnlySettlement) && mineRows.some((row) => row.id === creatorOnlySettlement),
+  );
+
+  const ownerMine = await owner.client.rpc("list_activity", { p_scope: "mine", p_limit: 100 });
+  check(
+    "settlement recipient is included in mine",
+    !ownerMine.error && (ownerMine.data ?? []).some((row) => row.id === settlement.data?.id),
+    ownerMine.error?.message,
+  );
+  const hiddenProfile = (ownerMine.data ?? [])
+    .find((row) => row.description === "activity-hidden-profile");
+  check(
+    "hidden profile does not remove activity row",
+    Boolean(hiddenProfile) && hiddenProfile.payer_name === null,
+  );
+
+  const globalLimit = await debtor.client.rpc("list_activity", { p_scope: "all", p_limit: 2 });
+  check(
+    "activity applies one global order and limit",
+    !globalLimit.error &&
+      globalLimit.data?.[0]?.description === "activity-unrelated-newest" &&
+      Number(globalLimit.data?.[1]?.amount_minor) === 50,
+    globalLimit.error?.message,
+  );
+  const mineLimit = await debtor.client.rpc("list_activity", { p_scope: "mine", p_limit: 1 });
+  check(
+    "mine filtering occurs before global limit",
+    !mineLimit.error && mineLimit.data?.[0]?.description === "activity-zero-split",
+    mineLimit.error?.message,
+  );
+  await expectRejected(
+    "list_activity rejects unknown scope",
+    debtor.client.rpc("list_activity", { p_scope: "unknown", p_limit: 25 }),
+  );
+
   const usageInsert = await debtor.client.from("asr_usage").insert({ user_id: debtor.id });
   check("client cannot write ASR usage directly", Boolean(usageInsert.error), errorText(usageInsert));
   const usageRead = await debtor.client.from("asr_usage").select("id");

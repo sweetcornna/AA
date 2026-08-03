@@ -1,5 +1,10 @@
 import { computeSplit } from "@aa/shared";
 import type { ExpenseDraft, ParsedExpense } from "@aa/shared";
+import {
+  mapActivityRows,
+  type ActivityItem,
+  type ActivityScope,
+} from "./activity";
 import { transcribeAudioWithClient } from "./asrClient";
 import { supabase } from "./supabase";
 import type {
@@ -231,91 +236,268 @@ export async function getMyBalances(): Promise<{ circle_id: string; net_minor: n
   return unwrap<{ circle_id: string; net_minor: number }[]>(res) ?? [];
 }
 
-export interface ActivityItem {
-  kind: "expense" | "settlement";
+export type { ActivityItem, ActivityScope } from "./activity";
+
+interface FallbackExpenseEvent {
+  kind: "expense";
   id: string;
-  circleId: string;
-  circleName: string;
-  at: string;
-  amountMinor: number;
+  circle_id: string;
+  occurred_at: string;
+  amount_minor: number;
   currency: string;
-  description?: string;
-  category?: string | null;
-  payerName?: string;
-  fromName?: string;
-  toName?: string;
+  description: string;
+  category: string | null;
+  creator_id: string;
+  payer_id: string;
 }
 
-/** Recent expenses + settlements across all my circles, newest first. */
-export async function listActivity(limit = 25): Promise<ActivityItem[]> {
-  const circles = await listMyCircles();
-  if (circles.length === 0) return [];
-  const circleMap = new Map(circles.map((c) => [c.id, c]));
-  const ids = circles.map((c) => c.id);
+interface FallbackSettlementEvent {
+  kind: "settlement";
+  id: string;
+  circle_id: string;
+  occurred_at: string;
+  amount_minor: number;
+  currency: string;
+  creator_id: string;
+  from_user: string;
+  to_user: string;
+}
 
-  const [expRes, setRes] = await Promise.all([
-    supabase
-      .from("expenses")
-      .select("id, circle_id, description, amount_minor, currency, category, created_at, payer_id")
-      .in("circle_id", ids)
-      .order("created_at", { ascending: false })
-      .limit(limit),
-    supabase
-      .from("settlements")
-      .select("id, circle_id, amount_minor, currency, settled_at, from_user, to_user")
-      .in("circle_id", ids)
-      .order("settled_at", { ascending: false })
-      .limit(limit),
-  ]);
-  if (expRes.error) throw new Error(expRes.error.message);
-  if (setRes.error) throw new Error(setRes.error.message);
-  const expenses = expRes.data ?? [];
-  const settlements = setRes.data ?? [];
+type FallbackActivityEvent =
+  | FallbackExpenseEvent
+  | FallbackSettlementEvent;
 
-  // resolve display names in one query
-  const userIds = new Set<string>();
-  for (const e of expenses) userIds.add(e.payer_id);
-  for (const s of settlements) {
-    userIds.add(s.from_user);
-    userIds.add(s.to_user);
+const FALLBACK_EXPENSE_COLUMNS =
+  "id, circle_id, payer_id, amount_minor, currency, description, category, created_by, created_at";
+const FALLBACK_SETTLEMENT_COLUMNS =
+  "id, circle_id, from_user, to_user, amount_minor, currency, created_by, settled_at";
+
+function fallbackExpense(row: Record<string, unknown>): FallbackExpenseEvent {
+  return {
+    kind: "expense",
+    id: row.id as string,
+    circle_id: row.circle_id as string,
+    occurred_at: row.created_at as string,
+    amount_minor: row.amount_minor as number,
+    currency: row.currency as string,
+    description: row.description as string,
+    category: row.category as string | null,
+    creator_id: row.created_by as string,
+    payer_id: row.payer_id as string,
+  };
+}
+
+function fallbackSettlement(
+  row: Record<string, unknown>,
+): FallbackSettlementEvent {
+  return {
+    kind: "settlement",
+    id: row.id as string,
+    circle_id: row.circle_id as string,
+    occurred_at: row.settled_at as string,
+    amount_minor: row.amount_minor as number,
+    currency: row.currency as string,
+    creator_id: row.created_by as string,
+    from_user: row.from_user as string,
+    to_user: row.to_user as string,
+  };
+}
+
+function fallbackActivityOrder(
+  left: FallbackActivityEvent,
+  right: FallbackActivityEvent,
+): number {
+  const byTime = right.occurred_at.localeCompare(left.occurred_at);
+  if (byTime !== 0) return byTime;
+  const byKind = left.kind.localeCompare(right.kind);
+  if (byKind !== 0) return byKind;
+  return left.id.localeCompare(right.id);
+}
+
+async function listFallbackSplitExpenses(
+  viewerId: string,
+  limit: number,
+): Promise<FallbackExpenseEvent[]> {
+  const res = await supabase
+    .from("expense_splits")
+    .select(
+      `expense:expenses!expense_splits_expense_circle_fkey!inner(${FALLBACK_EXPENSE_COLUMNS})`,
+    )
+    .eq("user_id", viewerId)
+    .order("expense(created_at)", { ascending: false })
+    .order("expense(id)", { ascending: true })
+    .limit(limit);
+  if (res.error) throw new Error(res.error.message);
+  return ((res.data ?? []) as unknown as {
+    expense: Record<string, unknown> | Record<string, unknown>[];
+  }[]).map((row) =>
+    fallbackExpense(Array.isArray(row.expense) ? row.expense[0] : row.expense),
+  );
+}
+
+async function listActivityFallback(
+  scope: ActivityScope,
+  limit: number,
+): Promise<ActivityItem[]> {
+  const auth = await supabase.auth.getUser();
+  if (auth.error || !auth.data.user) {
+    throw new Error(auth.error?.message ?? "not authenticated");
   }
-  const nameMap = new Map<string, string>();
-  if (userIds.size > 0) {
-    const profRes = await supabase
+  const viewerId = auth.data.user.id;
+  const expenseQuery = supabase
+    .from("expenses")
+    .select(FALLBACK_EXPENSE_COLUMNS)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: true })
+    .limit(limit);
+  const settlementQuery = supabase
+    .from("settlements")
+    .select(FALLBACK_SETTLEMENT_COLUMNS)
+    .order("settled_at", { ascending: false })
+    .order("id", { ascending: true })
+    .limit(limit);
+
+  if (scope === "mine") {
+    expenseQuery.or(`payer_id.eq.${viewerId},created_by.eq.${viewerId}`);
+    settlementQuery.or(
+      `from_user.eq.${viewerId},to_user.eq.${viewerId},created_by.eq.${viewerId}`,
+    );
+  }
+
+  const [expenseRes, settlementRes, splitExpenses] = await Promise.all([
+    expenseQuery,
+    settlementQuery,
+    scope === "mine"
+      ? listFallbackSplitExpenses(viewerId, limit)
+      : Promise.resolve([]),
+  ]);
+  if (expenseRes.error) throw new Error(expenseRes.error.message);
+  if (settlementRes.error) throw new Error(settlementRes.error.message);
+
+  const candidates: FallbackActivityEvent[] = [
+    ...((expenseRes.data ?? []) as Record<string, unknown>[]).map(
+      fallbackExpense,
+    ),
+    ...splitExpenses,
+    ...((settlementRes.data ?? []) as Record<string, unknown>[]).map(
+      fallbackSettlement,
+    ),
+  ];
+  const unique = new Map<string, FallbackActivityEvent>();
+  for (const event of candidates) unique.set(`${event.kind}:${event.id}`, event);
+  const events = [...unique.values()].sort(fallbackActivityOrder).slice(0, limit);
+  if (events.length === 0) return [];
+
+  const circleIds = [...new Set(events.map((event) => event.circle_id))];
+  const profileIds = new Set<string>();
+  const expenseIds: string[] = [];
+  for (const event of events) {
+    profileIds.add(event.creator_id);
+    if (event.kind === "expense") {
+      profileIds.add(event.payer_id);
+      expenseIds.push(event.id);
+    } else {
+      profileIds.add(event.from_user);
+      profileIds.add(event.to_user);
+    }
+  }
+
+  const [circleRes, profileRes, splitRes] = await Promise.all([
+    supabase.from("circles").select("id, name").in("id", circleIds),
+    supabase
       .from("profiles")
       .select("id, display_name")
-      .in("id", [...userIds]);
-    for (const p of profRes.data ?? []) nameMap.set(p.id, p.display_name);
-  }
-  const nm = (id: string) => nameMap.get(id) ?? "成员";
+      .in("id", [...profileIds]),
+    expenseIds.length > 0
+      ? supabase
+          .from("expense_splits")
+          .select("expense_id, owed_minor")
+          .eq("user_id", viewerId)
+          .in("expense_id", expenseIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (circleRes.error) throw new Error(circleRes.error.message);
+  if (profileRes.error) throw new Error(profileRes.error.message);
+  if (splitRes.error) throw new Error(splitRes.error.message);
 
-  const items: ActivityItem[] = [
-    ...expenses.map((e): ActivityItem => ({
-      kind: "expense",
-      id: e.id,
-      circleId: e.circle_id,
-      circleName: circleMap.get(e.circle_id)?.name ?? "圈子",
-      at: e.created_at,
-      amountMinor: e.amount_minor,
-      currency: e.currency,
-      description: e.description,
-      category: e.category,
-      payerName: nm(e.payer_id),
-    })),
-    ...settlements.map((s): ActivityItem => ({
-      kind: "settlement",
-      id: s.id,
-      circleId: s.circle_id,
-      circleName: circleMap.get(s.circle_id)?.name ?? "圈子",
-      at: s.settled_at,
-      amountMinor: s.amount_minor,
-      currency: s.currency,
-      fromName: nm(s.from_user),
-      toName: nm(s.to_user),
-    })),
-  ];
-  items.sort((a, b) => (a.at < b.at ? 1 : -1));
-  return items.slice(0, limit);
+  const circleNames = new Map(
+    ((circleRes.data ?? []) as { id: string; name: string }[]).map((row) => [
+      row.id,
+      row.name,
+    ]),
+  );
+  const profileNames = new Map(
+    ((profileRes.data ?? []) as { id: string; display_name: string }[]).map(
+      (row) => [row.id, row.display_name],
+    ),
+  );
+  const owedByExpense = new Map(
+    ((splitRes.data ?? []) as { expense_id: string; owed_minor: number }[]).map(
+      (row) => [row.expense_id, row.owed_minor],
+    ),
+  );
+
+  const rows = events.map((event) => {
+    const common = {
+      kind: event.kind,
+      id: event.id,
+      circle_id: event.circle_id,
+      circle_name: circleNames.get(event.circle_id),
+      occurred_at: event.occurred_at,
+      amount_minor: event.amount_minor,
+      currency: event.currency,
+      creator_id: event.creator_id,
+      creator_name: profileNames.get(event.creator_id) ?? null,
+    };
+    if (event.kind === "expense") {
+      return {
+        ...common,
+        description: event.description,
+        category: event.category,
+        payer_id: event.payer_id,
+        payer_name: profileNames.get(event.payer_id) ?? null,
+        my_owed_minor: owedByExpense.get(event.id) ?? null,
+        from_user: null,
+        from_name: null,
+        to_user: null,
+        to_name: null,
+      };
+    }
+    return {
+      ...common,
+      description: null,
+      category: null,
+      payer_id: null,
+      payer_name: null,
+      my_owed_minor: null,
+      from_user: event.from_user,
+      from_name: profileNames.get(event.from_user) ?? null,
+      to_user: event.to_user,
+      to_name: profileNames.get(event.to_user) ?? null,
+    };
+  });
+  return mapActivityRows(rows, viewerId);
+}
+
+/** Recent scoped activity across all circles visible to the caller. */
+export async function listActivity(
+  scope: ActivityScope,
+  viewerId: string,
+  limit = 25,
+): Promise<ActivityItem[]> {
+  const effectiveLimit = Math.min(Math.max(limit, 1), 100);
+  const res = await supabase.rpc("list_activity", {
+    p_scope: scope,
+    p_limit: effectiveLimit,
+  });
+  if (!res.error) {
+    return mapActivityRows(res.data as unknown[] | null, viewerId);
+  }
+  if (res.error.code !== "PGRST202") throw new Error(res.error.message);
+  if (scope !== "all" && scope !== "mine") {
+    throw new Error("Invalid activity scope");
+  }
+  return listActivityFallback(scope, effectiveLimit);
 }
 
 export async function listSettlements(circleId: string): Promise<Settlement[]> {
