@@ -5,21 +5,21 @@ APPROVED_MIN_CPUS=4
 APPROVED_MIN_MEMORY_KIB=8388608
 APPROVED_MIN_DISK_KIB=41943040
 APPROVED_MIN_DEBIAN_VERSION=12
+APPROVED_MIN_UBUNTU_VERSION=24
 
 # The observed/planning footprint for one seven-service stack is about 650-700
 # MiB. Its explicit caps are db 256 + templates 16 + auth 64 + rest 32 +
 # realtime 96 + functions 144 + kong 80 = 688 MiB. Add 130 MiB for the existing
-# host services and 78 MiB for Debian kernel/daemons to reach 896 MiB; swap is
+# host services and 78 MiB for Linux kernel/daemons to reach 896 MiB; swap is
 # deliberately excluded. Two CPUs schedule the database plus application tier,
 # and 20 GiB holds one pinned image set, database volume, and backup workspace.
 SINGLE_STACK_MIN_CPUS=2
 SINGLE_STACK_MIN_MEMORY_KIB=917504
 SINGLE_STACK_MIN_DISK_KIB=20971520
 # The OS floor is NOT a capacity trade-off and is identical in both profiles.
-# Debian 11 LTS ends 2026-08-31, after which the host receives no security
-# updates. A stack holding user financial records must not run on an
-# unsupported base, however few people use it.
-SINGLE_STACK_MIN_DEBIAN_VERSION="$APPROVED_MIN_DEBIAN_VERSION"
+# Debian 12+ and Ubuntu 24.04+ are the explicitly approved, supported host
+# families. A stack holding user financial records must not run on an
+# unsupported release, however few people use it.
 
 PROFILE=dual-stack
 if [[ "${1:-}" == "--profile" ]]; then
@@ -32,13 +32,11 @@ case "$PROFILE" in
     PROFILE_MIN_CPUS="$APPROVED_MIN_CPUS"
     PROFILE_MIN_MEMORY_KIB="$APPROVED_MIN_MEMORY_KIB"
     PROFILE_MIN_DISK_KIB="$APPROVED_MIN_DISK_KIB"
-    PROFILE_MIN_DEBIAN_VERSION="$APPROVED_MIN_DEBIAN_VERSION"
     ;;
   single-stack)
     PROFILE_MIN_CPUS="$SINGLE_STACK_MIN_CPUS"
     PROFILE_MIN_MEMORY_KIB="$SINGLE_STACK_MIN_MEMORY_KIB"
     PROFILE_MIN_DISK_KIB="$SINGLE_STACK_MIN_DISK_KIB"
-    PROFILE_MIN_DEBIAN_VERSION="$SINGLE_STACK_MIN_DEBIAN_VERSION"
     ;;
   *)
     printf 'Unknown capacity profile: %s.\n' "$PROFILE" >&2
@@ -57,12 +55,28 @@ fi
 [[ -r /etc/os-release ]] || { printf 'Operating system identity is unavailable.\n' >&2; exit 1; }
 # shellcheck disable=SC1091
 source /etc/os-release
-[[ "${ID:-}" == "debian" && "${VERSION_ID:-}" =~ ^[0-9]+$ ]] || {
-  printf 'Only a supported Debian host is approved.\n' >&2
+[[ "${VERSION_ID:-}" =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+  printf 'Operating system version is invalid.\n' >&2
   exit 1
 }
-(( VERSION_ID >= PROFILE_MIN_DEBIAN_VERSION )) || {
-  printf 'Debian version gate failed for %s: %s < %s.\n' "$PROFILE" "$VERSION_ID" "$PROFILE_MIN_DEBIAN_VERSION" >&2
+VERSION_MAJOR="${VERSION_ID%%.*}"
+case "${ID:-}" in
+  debian)
+    PROFILE_MIN_OS_VERSION="$APPROVED_MIN_DEBIAN_VERSION"
+    OS_NAME=Debian
+    ;;
+  ubuntu)
+    PROFILE_MIN_OS_VERSION="$APPROVED_MIN_UBUNTU_VERSION"
+    OS_NAME=Ubuntu
+    ;;
+  *)
+    printf 'Only a supported Debian or Ubuntu host is approved.\n' >&2
+    exit 1
+    ;;
+esac
+(( VERSION_MAJOR >= PROFILE_MIN_OS_VERSION )) || {
+  printf '%s version gate failed for %s: %s < %s.\n' \
+    "$OS_NAME" "$PROFILE" "$VERSION_ID" "$PROFILE_MIN_OS_VERSION" >&2
   exit 1
 }
 

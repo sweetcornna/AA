@@ -150,35 +150,35 @@ def check_capacity_profiles() -> None:
         for version in ("12", "13"):
             result = run("debian", version, 4, 8388608)
             check(result.returncode == 0, f"Debian {version} must pass the supported OS fixture: {result.stderr}")
+        for version in ("24.04", "26.04"):
+            result = run("ubuntu", version, 4, 8388608)
+            check(result.returncode == 0, f"Ubuntu {version} must pass the supported OS fixture: {result.stderr}")
         result = run("debian", "11", 4, 8388608)
         check(
             result.returncode != 0 and "Debian version gate failed for dual-stack: 11 < 12" in result.stderr,
             "Debian 11 must fail the supported OS gate",
         )
-        result = run("ubuntu", "24", 4, 8388608)
+        result = run("ubuntu", "22.04", 4, 8388608)
         check(
-            result.returncode != 0 and "Only a supported Debian host is approved" in result.stderr,
-            "non-Debian hosts must fail the supported OS gate",
+            result.returncode != 0 and "Ubuntu version gate failed for dual-stack: 22.04 < 24" in result.stderr,
+            "Ubuntu 22.04 must fail the supported OS gate",
+        )
+        result = run("fedora", "42", 4, 8388608)
+        check(
+            result.returncode != 0 and "Only a supported Debian or Ubuntu host is approved" in result.stderr,
+            "unapproved operating-system families must fail the supported OS gate",
         )
 
-        # The target VM's CPU/RAM/disk clear the single-stack floors, but it
-        # still runs Debian 11, whose LTS ends 2026-08-31. The OS gate is a
-        # security requirement, not a capacity trade-off, so it must reject the
-        # host as it exists today and only pass once the OS is upgraded.
-        current_vm = run("debian", "11", 2, 935936, "--profile", "single-stack")
-        check(
-            current_vm.returncode != 0
-            and "Debian version gate failed for single-stack: 11 < 12" in current_vm.stderr,
-            "the unsupported Debian 11 host must fail even in single-stack mode",
-        )
+        # The migration target is an Ubuntu 24.04 ARM VM. Its actual memory is
+        # far above the profile floor; this fixture proves the exact target OS
+        # family is accepted without weakening any resource threshold.
+        target_vm = run("ubuntu", "24.04", 2, 12213564, "--profile", "single-stack")
+        check(target_vm.returncode == 0, f"P2 single-stack VM fixture must pass: {target_vm.stderr}")
+        check(target_vm.stdout.count("Disk gate passed") == 2, "single-stack fixture must check both filesystems")
+        print("Single-stack P2-VM fixture output:")
+        print(target_vm.stdout.strip())
 
-        upgraded_vm = run("debian", "12", 2, 935936, "--profile", "single-stack")
-        check(upgraded_vm.returncode == 0, f"upgraded single-stack VM fixture must pass: {upgraded_vm.stderr}")
-        check(upgraded_vm.stdout.count("Disk gate passed") == 2, "single-stack fixture must check both filesystems")
-        print("Single-stack upgraded-VM fixture output:")
-        print(upgraded_vm.stdout.strip())
-
-        below_floor = run("debian", "12", 2, 917503, "--profile", "single-stack")
+        below_floor = run("ubuntu", "24.04", 2, 917503, "--profile", "single-stack")
         check(
             below_floor.returncode != 0 and "RAM gate failed: 917503 KiB < 917504 KiB" in below_floor.stderr,
             "single-stack RAM floor must fail closed",
@@ -189,14 +189,14 @@ def check_capacity_profiles() -> None:
         # Use a supported OS so this exercises the override guard itself rather
         # than tripping the Debian gate first.
         lowered = run(
-            "debian", "12", 2, 935936, "--profile", "single-stack",
+            "ubuntu", "24.04", 2, 12213564, "--profile", "single-stack",
             extra_environment={"AA_MIN_MEMORY_KIB": "1"},
         )
         check(
             lowered.returncode != 0 and "cannot be lower than the single-stack floor" in lowered.stderr,
             "single-stack environment overrides must not lower the hard floor",
         )
-        unknown = run("debian", "12", 4, 8388608, "--profile", "skip")
+        unknown = run("ubuntu", "24.04", 4, 8388608, "--profile", "skip")
         check(unknown.returncode != 0 and "Unknown capacity profile" in unknown.stderr, "unknown capacity profiles must fail closed")
 
 
@@ -1070,20 +1070,18 @@ def main() -> None:
     for unchanged in (
         "APPROVED_MIN_CPUS=4", "APPROVED_MIN_MEMORY_KIB=8388608",
         "APPROVED_MIN_DISK_KIB=41943040", "APPROVED_MIN_DEBIAN_VERSION=12",
+        "APPROVED_MIN_UBUNTU_VERSION=24",
     ):
         check(unchanged in capacity, f"dual-stack threshold changed: {unchanged}")
     for single_floor in (
         "SINGLE_STACK_MIN_CPUS=2", "SINGLE_STACK_MIN_MEMORY_KIB=917504",
         "SINGLE_STACK_MIN_DISK_KIB=20971520",
-        # The OS floor is a security gate, not a capacity trade-off: both
-        # profiles must require the same supported Debian release.
-        'SINGLE_STACK_MIN_DEBIAN_VERSION="$APPROVED_MIN_DEBIAN_VERSION"',
     ):
         check(single_floor in capacity, f"single-stack floor missing: {single_floor}")
     for rationale in (
         "observed/planning footprint for one seven-service stack", "about 650-700",
         "db 256 + templates 16 + auth 64 + rest 32", "functions 144 + kong 80 = 688 MiB",
-        "130 MiB for the existing", "78 MiB for Debian kernel/daemons",
+        "130 MiB for the existing", "78 MiB for Linux kernel/daemons",
         "swap is", "20 GiB holds one pinned image set",
     ):
         check(rationale in capacity, f"single-stack capacity rationale missing: {rationale}")
@@ -1092,8 +1090,9 @@ def main() -> None:
     check("MIN_CPUS >= PROFILE_MIN_CPUS" in capacity and "MIN_MEMORY_KIB >= PROFILE_MIN_MEMORY_KIB" in capacity and "MIN_DISK_KIB >= PROFILE_MIN_DISK_KIB" in capacity, "selected profile thresholds must not be lowerable")
     check("SKIP" not in capacity.upper() and "BYPASS" not in capacity.upper(), "capacity gate must not expose a skip or bypass path")
     check("APPROVED_MIN_DEBIAN_VERSION=12" in capacity, "capacity gate must reject the Debian 11 host")
-    check('[[ "${ID:-}" == "debian"' in capacity, "capacity gate must require an approved Debian host")
-    check("VERSION_ID >= PROFILE_MIN_DEBIAN_VERSION" in capacity, "Debian version gate must apply in every profile")
+    check("APPROVED_MIN_UBUNTU_VERSION=24" in capacity, "capacity gate must reject the Ubuntu 22.04 host")
+    check('debian)' in capacity and 'ubuntu)' in capacity, "capacity gate must explicitly enumerate approved OS families")
+    check("VERSION_MAJOR >= PROFILE_MIN_OS_VERSION" in capacity, "OS version gate must apply in every profile")
     check('for target_path in "${TARGET_PATHS[@]}"' in capacity, "capacity gate must check every supplied filesystem path")
     compose_wrapper = (INFRA / "scripts/compose.sh").read_text()
     check("PROFILE=dual-stack" in compose_wrapper, "Compose wrapper must default to dual-stack")
@@ -1130,7 +1129,7 @@ def main() -> None:
     for required in (
         "deliberate deviation", "--profile single-stack", "917,504 KiB", "20,971,520 KiB",
         "没有 staging validation", "所有变更直接进入 production", "PostgreSQL 在压力下可能触及 swap",
-        "host OOM 或单容器 OOM 风险", "Xray、beszel、beszel-agent 和 uptime-kuma",
+        "host OOM 或单容器 OOM 风险", "Xray、Relay、WARP、Nginx、finance、marketplace",
         "isolation proof **没有执行**", "drill 前 production 必须停止",
         "Single-stack recovery expectations", "RPO 24h、RTO 4h",
         "--destination local", "`azure-blob` 是默认值",

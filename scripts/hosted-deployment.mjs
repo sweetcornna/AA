@@ -10,9 +10,9 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = path.dirname(SCRIPT_PATH);
 const ROOT_DIR = path.resolve(SCRIPT_DIR, "..");
 const DEFAULT_TARGETS_FILE = path.join(ROOT_DIR, "supabase", "hosted-targets.json");
-const EXPECTED_REGION = "japaneast";
+const EXPECTED_REGION = "ap-singapore-2";
 const EXPECTED_DEPLOYMENT_TYPE = "self-hosted";
-const EXPECTED_SERVER_ID = "azure-aa-40-115-207-13";
+const EXPECTED_SERVER_ID = "socks-p2-149-118-61-165";
 const DEPLOYMENT_MODES = new Set(["dual-stack", "single-stack"]);
 const EXPECTED_ORIGINS = {
   staging: "https://aa-staging-api.cornna.xyz",

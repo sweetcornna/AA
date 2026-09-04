@@ -1,4 +1,4 @@
-# Azure 自托管 Supabase 部署手册
+# 自托管 Supabase 部署手册
 
 AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不能只部署 PostgreSQL。本仓库保留以下两种模式：
 
@@ -10,7 +10,7 @@ AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不�
 | staging | `aa-staging-primary` | `https://aa-staging-api.cornna.xyz` | `127.0.0.1:18100` | `/srv/aa/staging` |
 | production | `aa-production-primary` | `https://aa-api.cornna.xyz` | `127.0.0.1:18101` | `/srv/aa/production` |
 
-当前 Standard_B2ats_v2（2 vCPU、`MemTotal` 约 914 MiB、4 GiB swap、Debian 11）使用 `single-stack` 是 operator 明确批准的 deliberate deviation。它不改变也不降低默认 `dual-stack` 合同。
+当前 production 目标是 `socks` 项目的现 P2（Oracle Cloud `ap-singapore-2`，ARM64，2 vCPU、约 12 GiB RAM、4 GiB swap、Ubuntu 24.04）。2026-09-03 从旧 Azure `40.115.207.13` 迁移时继续采用 operator 明确批准的 `single-stack` deliberate deviation；这不改变也不降低默认 `dual-stack` 合同。
 
 本文和仓库脚本不会授权服务器、DNS 或 GitHub mutation。每次外部变更仍需明确批准。
 
@@ -18,13 +18,13 @@ AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不�
 
 默认 `dual-stack` 只有全部满足下列条件才可启动：
 
-- [ ] 主机已迁移/重建到仍受安全支持的 Debian 13（最低 Debian 12）；当前 Debian 11 的 LTS 于 2026-08-31 结束，且存在 `reboot-required`，不得作为新增长期 production 的基线；
+- [ ] 主机运行明确批准且仍受安全支持的 Debian 12+ 或 Ubuntu 24.04+；其他发行版及更旧版本不得作为 production 基线；
 - [ ] VM 已扩容到至少 4 vCPU，且 Linux 实测 `MemTotal >= 8,388,608 KiB`；双栈与既有服务建议 16 GiB；swap 不计入物理内存门；
 - [ ] `/srv/aa` 所在 filesystem 与 Docker `DockerRootDir` 所在 filesystem 各有至少 40 GiB 可用空间，且容量门通过；
 - [ ] 聊天中曾暴露的服务器密码和 Cloudflare token 已撤销并轮换；已验证两把独立 SSH key 与回滚通道，并关闭 sshd password authentication；DNS 只用最小 Zone DNS token；
 - [ ] staging/production 的 Resend、OpenAI、数据库/JWT、备份凭据完全分开；
 - [ ] 备份模式已显式批准：默认 `azure-blob` 时 Azure Blob 容器和 VM managed identity 权限已配置，主机已从可信来源安装并验证 `age` 与 `azcopy`，且不使用长期 SAS URL；临时采用 `local` 时已接受同盘丢失风险并继续把 off-host copy 作为未完成 gate；
-- [ ] Azure effective NSG 已确认只开放批准的 22/80/443，或 WARP UDP 28526 例外已经明确批准；host INPUT=ACCEPT 不能替代控制面证据；
+- [ ] 云侧 effective firewall（P2 为 OCI Security List/NSG）已确认只开放批准的业务端口；既有 SOCKS/Relay/WARP 端口按 P2 基线保留，AA 只复用 80/443 的 SNI 分流；host INPUT=ACCEPT 不能替代控制面证据；
 - [ ] `aa-api.cornna.xyz`、`aa-staging-api.cornna.xyz` 的 DNS/TLS 变更已单独批准；
 - [ ] 已加密备份并恢复验证双 SSH key、Nginx/SNI、Xray unit/drop-in/config、WARP、Fail2ban、`/opt/light-panel/*` Docker bind data 与 certbot 账号/证书/续期配置，并记录回滚命令；
 - [ ] source commit clean，CI、基础设施测试和独立验证通过。
@@ -33,16 +33,16 @@ AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不�
 
 - [ ] 每条相关命令显式使用 `--profile single-stack`；漏写时回到默认 `dual-stack`，不会自动降级；
 - [ ] target manifest 为 `deploymentMode=single-stack`，只定义 production；env、migration 和 Nginx target 都必须是 production；
-- [ ] Debian `VERSION_ID >= 11`、在线 CPU `>= 2`、物理 `MemTotal >= 917,504 KiB`（896 MiB）；4 GiB swap 和 `MemAvailable` 都不计入该硬门；
+- [ ] Debian `VERSION_ID >= 12` 或 Ubuntu `VERSION_ID >= 24.04`、在线 CPU `>= 2`、物理 `MemTotal >= 917,504 KiB`（896 MiB）；swap 和 `MemAvailable` 都不计入该硬门；
 - [ ] `/srv/aa` 与 Docker `DockerRootDir` 所在 filesystem 分别至少有 `20,971,520 KiB`（20 GiB）free；即使两者是同一 filesystem 也必须完成两次路径检查；
 - [ ] 上游 manifest、locked commit、function/template artifact 与 `AA_SOURCE_FINGERPRINT` 全部验证通过；
 - [ ] production env 仍满足所有 secret、JWT、URL、port、backup 与 provider 校验；
 - [ ] restore drill 仍使用随机 restore-only project/network/volumes，并且 drill 前 production 必须停止；
 - [ ] source clean，全部仓库验证、encrypted backup、restore drill、production non-destructive canary 和恢复步骤均通过/演练。
 
-896 MiB floor 的来源不是目标 VM 的现有数值：七个服务的明确上限合计 688 MiB（PostgreSQL 256、template 16、GoTrue 64、PostgREST 32、Realtime 96、Edge Runtime 144、Kong 80），再加现有 Xray/beszel/beszel-agent/uptime-kuma 约 130 MiB 和 Debian kernel/host daemon 78 MiB。`AA_MIN_CPUS`、`AA_MIN_MEMORY_KIB`、`AA_MIN_DISK_KIB` 只能提高当前 profile 的门，不能降低。
+896 MiB floor 的来源不是目标 VM 的现有数值：七个服务的明确上限合计 688 MiB（PostgreSQL 256、template 16、GoTrue 64、PostgREST 32、Realtime 96、Edge Runtime 144、Kong 80），再加既有主机服务约 130 MiB 和 Linux kernel/host daemon 78 MiB。P2 的实际余量更高，但仍必须保护其 Xray、Relay、WARP、Nginx、监控和其他容器。`AA_MIN_CPUS`、`AA_MIN_MEMORY_KIB`、`AA_MIN_DISK_KIB` 只能提高当前 profile 的门，不能降低。
 
-operator 同时明确接受：没有 staging validation；所有变更直接进入 production；PostgreSQL 在压力下可能触及 swap；914 MiB 主机仍有 host OOM 或单容器 OOM 风险；Xray、beszel、beszel-agent 和 uptime-kuma 与 production 共享 CPU、RAM、swap 和磁盘。低于任一所选 profile gate 时只允许本地仓库验证，不得起远端容器、改 DNS、签证书或发布 APK。
+operator 同时明确接受：没有 staging validation；所有变更直接进入 production；PostgreSQL 在压力下可能触及 swap；即使 P2 有约 12 GiB RAM，host OOM 或单容器 OOM 风险仍需监控；Xray、Relay、WARP、Nginx、finance、marketplace 与其他既有容器同 production 共享 CPU、RAM、swap 和磁盘。低于任一所选 profile gate 时只允许本地仓库验证，不得起远端容器、改 DNS、签证书或发布 APK。
 
 ## 架构与暴露面
 
@@ -198,7 +198,7 @@ sudo infra/supabase-selfhost/scripts/capacity-check.sh \
   /srv/aa "$(sudo docker info --format '{{.DockerRootDir}}')"
 ```
 
-single-stack 的 exact floor 是 2 CPU、917,504 KiB physical RAM、两个路径各 20,971,520 KiB free、Debian 11；dual-stack 保持 4 CPU、8,388,608 KiB、两个路径各 41,943,040 KiB free、Debian 12。swap 只能缓解峰值压力，永远不能替代 `MemTotal` 门。`compose.sh` 在读取 DockerRootDir 前先 gate `/srv/aa`，之后再对 `/srv/aa` 和 DockerRootDir 执行同一 profile 的完整 gate。
+single-stack 的 exact floor 是 2 CPU、917,504 KiB physical RAM、两个路径各 20,971,520 KiB free、Debian 12+ 或 Ubuntu 24.04+；dual-stack 保持 4 CPU、8,388,608 KiB、两个路径各 41,943,040 KiB free，并使用相同 OS 支持门。swap 只能缓解峰值压力，永远不能替代 `MemTotal` 门。`compose.sh` 在读取 DockerRootDir 前先 gate `/srv/aa`，之后再对 `/srv/aa` 和 DockerRootDir 执行同一 profile 的完整 gate。
 
 确认现有监听、容器和磁盘；不要把外部端口扫描直接解释为 VM listener：
 
@@ -274,7 +274,7 @@ python3 infra/supabase-selfhost/scripts/render-nginx.py \
 
 执行顺序：
 
-1. Cloudflare 创建 DNS-only A records 指向 `40.115.207.13`；token 只通过受保护 input；
+1. Cloudflare 的 DNS-only A record 指向 P2 `149.118.61.165`；token 只通过受保护 input；
 2. 验证 authoritative DNS；
 3. 使用 DNS-01 或与现有 80/443 路由兼容的 webroot 签发 production 证书；dual-stack 才签发第二个 staging 证书；
 4. 备份 Nginx config 与 `/etc/sota-vless-hy/site-stream-map.conf`；
