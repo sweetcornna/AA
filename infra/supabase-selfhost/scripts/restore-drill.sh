@@ -180,8 +180,13 @@ if missing:
     raise SystemExit(f"archive TOC lacks required relations: {missing}")
 '
 "${compose[@]}" exec -T db createdb -U postgres -T template0 -O postgres aa_restore
+# The pinned Supabase image intentionally creates postgres without SUPERUSER.
+# Restoring owner/ACL metadata requires the image's bootstrap superuser so
+# pg_restore can SET ROLE to supabase_admin and supabase_auth_admin. The target
+# database remains owned by postgres and all post-restore validation still runs
+# as postgres.
 decrypt_archive | "${compose[@]}" exec -T db \
-  pg_restore -U postgres -d aa_restore --single-transaction --exit-on-error
+  pg_restore -U supabase_admin -d aa_restore --single-transaction --exit-on-error
 
 python3 - "$MIGRATIONS_DIR" <<'PY' | "${compose[@]}" exec -T db \
   psql -U postgres -d aa_restore --quiet
