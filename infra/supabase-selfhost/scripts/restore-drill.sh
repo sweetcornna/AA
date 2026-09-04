@@ -179,6 +179,17 @@ missing = [item for item in required if item not in value]
 if missing:
     raise SystemExit(f"archive TOC lacks required relations: {missing}")
 '
+# Realtime creates this owner role at runtime, so it is present in production
+# dumps but intentionally absent from the database-only restore stack. Recreate
+# its exact least-privilege attributes before restoring ownership metadata.
+# This is unconditional on a fresh, randomly named drill: a future upstream
+# image that starts defining the role must fail here and receive explicit review.
+"${compose[@]}" exec -T db psql -X -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres --quiet <<'SQL'
+create role supabase_realtime_admin
+  nosuperuser noinherit nocreaterole nocreatedb nologin noreplication nobypassrls;
+grant supabase_realtime_admin to postgres;
+SQL
 "${compose[@]}" exec -T db createdb -U postgres -T template0 -O postgres aa_restore
 # The pinned Supabase image intentionally creates postgres without SUPERUSER.
 # Restoring owner/ACL metadata requires the image's bootstrap superuser so
