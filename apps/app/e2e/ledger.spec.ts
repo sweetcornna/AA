@@ -133,6 +133,43 @@ test("create, invite, three split modes, realtime, settlement and departure", as
   }
 });
 
+test("fresh membership is required before saving with the default everyone split", async ({ page, ledger }) => {
+  const id = await ledger.createCircle("成员刷新回归", "CNY", false);
+  await login(page, ledger.owner);
+  await page.goto(`/#/circles/${id}`);
+  await expect(page.getByRole("heading", { name: "账单记录" })).toBeVisible();
+  // Seed the form's member cache while only the owner belongs to this circle.
+  await page.goto(`/#/circles/${id}/add`);
+  await expect(page.getByRole("checkbox", { name: /分摊成员/ })).toHaveCount(1);
+  await expect(page.getByText("正在更新圈子成员，请稍候…")).toBeHidden();
+  await page.goto(`/#/circles/${id}`);
+  let releaseMembers!: () => void;
+  const gate = new Promise<void>((resolve) => { releaseMembers = resolve; });
+  await page.route("**/rest/v1/circle_members?**", async (route) => {
+    await gate;
+    await route.continue();
+  });
+  try {
+    const invitation = unwrap(await ledger.owner.client.rpc("create_invitation", { p_circle_id: id }));
+    unwrap(await ledger.member.client.rpc("accept_invitation", { p_token: invitation.token }));
+    await page.goto(`/#/circles/${id}/add`);
+    await page.getByLabel("金额", { exact: true }).fill("100");
+    await page.getByLabel("备注，如 火锅、打车").fill("新成员参与第一笔");
+    await expect(page.getByRole("button", { name: "保存账单", exact: true })).toBeDisabled();
+    await expect(page.getByText("正在更新圈子成员，请稍候…")).toBeVisible();
+    releaseMembers();
+    await expect(page.getByRole("checkbox", { name: /分摊成员/ })).toHaveCount(2);
+    await expect(page.getByRole("checkbox", { name: "分摊成员 周宁" })).toBeChecked();
+    await page.getByRole("button", { name: "保存账单", exact: true }).click();
+    await expect(page.getByText("新成员参与第一笔", { exact: true })).toBeVisible();
+    const splits = unwrap(await admin.from("expense_splits").select("owed_minor").eq("circle_id", id));
+    expect(splits.map((split) => split.owed_minor).sort()).toEqual([5000, 5000]);
+  } finally {
+    releaseMembers();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
 test("owner selects successor, old route redirects, profile and account cache isolation", async ({
   page,
   ledger,

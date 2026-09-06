@@ -81,6 +81,9 @@ export function AddExpensePage() {
     queryKey: ["members", circleId],
     queryFn: () => listMembers(circleId!),
     enabled: !!circleId,
+    // Joining can commit before its Realtime event reaches another device.
+    // Always confirm the participant list before allowing a new expense.
+    refetchOnMount: "always",
   });
 
   const currency = circle.data?.default_currency ?? "CNY";
@@ -134,31 +137,37 @@ export function AddExpensePage() {
     if (initializedCircle.current !== circleId) {
       initializedCircle.current = circleId ?? null;
       selectionEdited.current = false;
+      setParticipants(new Set());
+      setPayerId(
+        members.data.find((m) => m.user_id === user?.id)?.user_id ??
+          members.data[0]?.user_id ??
+          "",
+      );
+    } else if (!members.data.some((m) => m.user_id === payerId)) {
       setPayerId(
         members.data.find((m) => m.user_id === user?.id)?.user_id ??
           members.data[0]?.user_id ??
           "",
       );
     }
-    // A newly joined friend can arrive after the cached membership response.
-    // Keep the default "everyone" current until the user customizes selection.
-    if (!selectionEdited.current)
-      setParticipants(new Set(members.data.map((m) => m.user_id)));
-  }, [circleId, members.data, user?.id]);
+  }, [circleId, members.data, user?.id, payerId]);
 
   const totalMinor = parseMajor(amountStr, digits);
   const participantIds = useMemo(
     () =>
       (members.data ?? [])
         .map((m) => m.user_id)
-        .filter((id) => participants.has(id)),
+        .filter((id) => !selectionEdited.current || participants.has(id)),
     [members.data, participants],
   );
 
   function toggle(id: string) {
+    const wasEdited = selectionEdited.current;
     selectionEdited.current = true;
     setParticipants((prev) => {
-      const next = new Set(prev);
+      const next = new Set(
+        wasEdited ? prev : (members.data ?? []).map((m) => m.user_id),
+      );
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
@@ -470,6 +479,7 @@ export function AddExpensePage() {
     !previewError &&
     !save.isPending &&
     !parse.isPending &&
+    !members.isFetching &&
     voice === "idle" &&
     !!members.data?.some((m) => m.user_id === payerId);
   const amtParts =
@@ -756,7 +766,7 @@ export function AddExpensePage() {
         </div>
         <Card>
           {members.data?.map((m, i) => {
-            const checked = participants.has(m.user_id);
+            const checked = !selectionEdited.current || participants.has(m.user_id);
             const owed = allocation?.get(m.user_id);
             return (
               <div key={m.user_id}>
@@ -834,6 +844,11 @@ export function AddExpensePage() {
         >
           {save.isPending ? "保存中…" : "保存账单"}
         </Button>
+        {members.isFetching && (
+          <p role="status" className="pt-2 text-center text-[13px] text-[var(--label2)]">
+            正在更新圈子成员，请稍候…
+          </p>
+        )}
         {previewError && (
           <p className="px-4 pt-2 text-[13px]" style={{ color: "var(--red)" }}>
             {previewError}
