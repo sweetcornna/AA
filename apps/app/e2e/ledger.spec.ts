@@ -406,11 +406,29 @@ test("voice consent, supported MediaRecorder capture or manual fallback, transcr
       value: undefined,
       configurable: true,
     });
+    const NativeRecorder = window.MediaRecorder;
+    if (NativeRecorder) {
+      window.MediaRecorder = class extends NativeRecorder {
+        constructor(stream: MediaStream, options?: MediaRecorderOptions) {
+          super(stream, options);
+          this.addEventListener("dataavailable", (event) => {
+            (window as any).__qaRecordedBytes =
+              ((window as any).__qaRecordedBytes ?? 0) + event.data.size;
+          });
+        }
+      };
+    }
     navigator.mediaDevices.getUserMedia = async () => {
       const audio = new AudioContext();
       const oscillator = audio.createOscillator();
       const destination = audio.createMediaStreamDestination();
       oscillator.connect(destination);
+      // Keep the headless audio graph clocked through its real output backend.
+      // The output is silent; the recorder still receives the oscillator.
+      const silentOutput = audio.createGain();
+      silentOutput.gain.value = 0;
+      oscillator.connect(silentOutput);
+      silentOutput.connect(audio.destination);
       oscillator.start();
       (window as any).__qaAudio = { audio, oscillator, destination };
       await audio.resume();
@@ -442,6 +460,7 @@ test("voice consent, supported MediaRecorder capture or manual fallback, transcr
   ).toBeVisible();
   await page.getByRole("button", { name: "语音", exact: true }).click();
   await page.getByRole("button", { name: "同意并录音", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "使用云端语音转写" })).toBeHidden();
   // Playwright's Linux WebKit has no MediaRecorder; macOS WebKit does.
   // Verify the real fallback on that runtime instead of faking an encoder.
   if (!captureSupported) {
@@ -458,10 +477,12 @@ test("voice consent, supported MediaRecorder capture or manual fallback, transcr
     expect(stored).toEqual([{ source: "manual", asr_provider: null }]);
     return;
   }
-  await expect(page.getByRole("button", { name: /录音 1s/ })).toBeVisible();
-  const request = page.waitForRequest("**/functions/v1/asr-transcribe");
-  await page.getByRole("button", { name: /点按结束/ }).click();
-  await request;
+  await expect(page.getByRole("button", { name: /录音 \d+s.*点按结束/ })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as any).__qaRecordedBytes ?? 0)).toBeGreaterThan(0);
+  await Promise.all([
+    page.waitForRequest("**/functions/v1/asr-transcribe", { timeout: 15_000 }),
+    page.getByRole("button", { name: /点按结束/ }).click(),
+  ]);
   expect(
     await page.evaluate(() => (window as any).__qaUploadBytes),
   ).toBeGreaterThan(0);
@@ -490,6 +511,28 @@ test("voice consent, supported MediaRecorder capture or manual fallback, transcr
   expect(stored).toEqual([
     { source: "voice", asr_provider: "cloud:qa-fixture" },
   ]);
+});
+
+test("unsupported recorder recovers to a saved manual expense after consent closes", async ({ page, ledger }) => {
+  const id = await ledger.createCircle();
+  await page.addInitScript(() => {
+    for (const key of ["SpeechRecognition", "webkitSpeechRecognition", "MediaRecorder"]) {
+      Object.defineProperty(window, key, { value: undefined, configurable: true });
+    }
+  });
+  await login(page, ledger.owner);
+  await page.goto(`/#/circles/${id}/add`);
+  await page.getByRole("button", { name: "语音", exact: true }).click();
+  await page.getByRole("button", { name: "同意并录音", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "使用云端语音转写" })).toBeHidden();
+  await expect(page.getByText(/不支持.*录音/)).toBeVisible();
+  await page.getByLabel("金额", { exact: true }).fill("80");
+  await expect(page.getByLabel("金额", { exact: true })).toHaveValue("80");
+  await page.getByLabel("备注，如 火锅、打车").fill("语音不可用时手动保存");
+  await page.getByRole("button", { name: "保存账单", exact: true }).click();
+  await expect(page.getByText("语音不可用时手动保存", { exact: true })).toBeVisible();
+  const stored = unwrap(await admin.from("expenses").select("source,asr_provider").eq("circle_id", id));
+  expect(stored).toEqual([{ source: "manual", asr_provider: null }]);
 });
 
 test("microphone denial or unsupported capture and unavailable balances recover without false zero", async ({
