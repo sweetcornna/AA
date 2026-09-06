@@ -2,7 +2,7 @@
 
 ## 0. 现状速览
 
-仓库包含 React/Tauri 多平台客户端、migrations `0001`–`0012`、Auth/Realtime/RPC、三个 Edge Function、Android release signing gate，以及 Azure self-hosted Supabase 双栈基础设施。生产部署、永久签名候选和公开 GitHub Release 仍需按独立 runbook 的外部 gates 执行。
+仓库包含 React/Tauri 多平台客户端、migrations `0001`–`0014`、Auth/Realtime/RPC、两个 Edge Function、Android release signing gate，以及 P2 self-hosted Supabase 基础设施（当前采用 single-stack）。生产部署、永久签名候选和公开 GitHub Release 仍需按独立 runbook 的外部 gates 执行。
 
 本地开发继续使用 Supabase CLI/Docker；Azure staging/production 操作只按 [`HOSTED_DEPLOYMENT.md`](HOSTED_DEPLOYMENT.md)，不得把本节 local seed/reset 命令用于远端。
 
@@ -77,10 +77,9 @@ npm test --workspace=@aa/shared
 
 "一句话记账"在记一笔页顶部：输入/语音说一句话 → `parse-expense` Edge Function 解析成结构化账单 → 预填表单（含人名对齐、未识别项高亮）→ 确认保存（语音来源 `source='voice'`、纯文字 AI 解析 `source='agent'`，原文存 `raw_text`，同时落 `ai_provider/asr_provider/ai_confidence/ai_raw` 审计字段）。
 
-「助手」页问账本（`agent-query`）：花销/结余/谁付的自动回答；说"帮我和小明结一下账"时 agent 只**提议**一笔结算（金额来自服务端权威快照，模型不能编造），界面出确认卡片，点「确认结算」才由客户端在 RLS 约束下写入。
 
 - 本地 `supabase start` 自带 edge runtime，直接服务 `supabase/functions/*`；改代码后 `docker restart supabase_edge_runtime_AA` 生效。
-- 本地未配置 LLM key 时走 rule provider（金额/人名/分类/相对日期/结算建议）。Android 云 ASR 的 staging/production release gate 仍要求服务器端 OpenAI key；目标校验、secret-safe 配置与 promotion 流程见 [`HOSTED_DEPLOYMENT.md`](HOSTED_DEPLOYMENT.md)。
+- 本地未配置 LLM key 时走 rule provider（金额/人名/分类/相对日期）。Android 云 ASR 的 staging/production release gate 仍要求服务器端 OpenAI key；目标校验、secret-safe 配置与 promotion 流程见 [`HOSTED_DEPLOYMENT.md`](HOSTED_DEPLOYMENT.md)。
 - **AI 层厂商无关、可插拔**（`supabase/functions/_shared/llm/`）：`registry.ts` 按
   「`ai_settings` 圈子行 > `ai_settings` 全局行 > `LLM_PROVIDER` 环境变量 > 默认 claude」
   解析 provider；任一层 `ai_enabled=false` 是总开关（强制规则 provider，不出外网）。
@@ -93,7 +92,7 @@ npm test --workspace=@aa/shared
   # 切换厂商：在 ignored 本地 env 中配置 LLM_PROVIDER/openai key，
   # hosted 则使用受保护环境；也可通过 ai_settings 选择 provider。
   ```
-- 端到端验证：`node scripts/verify-ai.mjs`（解析 → 助手问答 → 结算提议/确认 → 总开关，13 项断言）；
+- 端到端验证：`node scripts/verify-ai.mjs`（结构化解析、成员匹配、规则回退和圈子开关）；
   UI 冒烟另有 `python3 scripts/e2e-ai-parse.py`。
 
 ## 关键设计备注

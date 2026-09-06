@@ -35,13 +35,19 @@ class FakeRecorder {
   }
 
   stop() {
-    if (this.state === "inactive") throw new DOMException("inactive", "InvalidStateError");
+    if (this.state === "inactive")
+      throw new DOMException("inactive", "InvalidStateError");
     this.state = "inactive";
-    queueMicrotask(() => this.onstop?.call(this as unknown as MediaRecorder, new Event("stop")));
+    queueMicrotask(() =>
+      this.onstop?.call(this as unknown as MediaRecorder, new Event("stop")),
+    );
   }
 
   data(blob: Blob) {
-    this.ondataavailable?.call(this as unknown as MediaRecorder, { data: blob } as BlobEvent);
+    this.ondataavailable?.call(
+      this as unknown as MediaRecorder,
+      { data: blob } as BlobEvent,
+    );
   }
 }
 
@@ -49,7 +55,10 @@ function setup() {
   const track = new FakeTrack();
   const stream = { getTracks: () => [track] } as unknown as MediaStream;
   const recorder = new FakeRecorder();
-  const transcribe = vi.fn(async (blob: Blob) => ({ text: await blob.text(), provider: "test" }));
+  const transcribe = vi.fn(async (blob: Blob) => ({
+    text: await blob.text(),
+    provider: "test",
+  }));
   const dependencies: RecordingDependencies = {
     getUserMedia: vi.fn(async () => stream),
     isTypeSupported: (mime) => mime === "audio/webm;codecs=opus",
@@ -63,12 +72,23 @@ function setup() {
 
 describe("recording format selection", () => {
   it("uses the first actually-supported allowlisted format", () => {
-    expect(preferredRecordingMimeType((mime) => mime === "audio/mp4")).toBe("audio/mp4");
+    expect(preferredRecordingMimeType((mime) => mime === "audio/mp4")).toBe(
+      "audio/mp4",
+    );
     expect(preferredRecordingMimeType(() => false)).toBeNull();
   });
 });
 
 describe("cloud recording", () => {
+  it("uploads WebKit codec-qualified MP4 using its negotiated container type", async () => {
+    const { dependencies, recorder, transcribe } = setup();
+    dependencies.isTypeSupported = (mime) => mime === "audio/mp4";
+    recorder.mimeType = "audio/mp4;codecs=mp4a.40.2";
+    const recording = await startCloudRecording(dependencies);
+    recorder.data(new Blob(["mp4 audio"], { type: recorder.mimeType }));
+    await recording.stopAndTranscribe();
+    expect(transcribe.mock.calls[0][0].type).toBe("audio/mp4");
+  });
   it("uploads a binary Blob, stops tracks, and is idempotent", async () => {
     const { dependencies, recorder, track, transcribe } = setup();
     const recording = await startCloudRecording(dependencies);
@@ -103,9 +123,12 @@ describe("cloud recording", () => {
     const { dependencies, track } = setup();
     let releaseStream!: (stream: MediaStream) => void;
     const stream = await dependencies.getUserMedia({ audio: true });
-    dependencies.getUserMedia = vi.fn(() => new Promise<MediaStream>((resolve) => {
-      releaseStream = resolve;
-    }));
+    dependencies.getUserMedia = vi.fn(
+      () =>
+        new Promise<MediaStream>((resolve) => {
+          releaseStream = resolve;
+        }),
+    );
 
     const pending = startCloudRecording(dependencies);
     releaseStream(stream);
@@ -121,21 +144,28 @@ describe("cloud recording", () => {
       throw new DOMException("unsupported", "NotSupportedError");
     };
 
-    await expect(startCloudRecording(dependencies)).rejects.toThrow("无法启动录音");
+    await expect(startCloudRecording(dependencies)).rejects.toThrow(
+      "无法启动录音",
+    );
     expect(track.stopped).toBe(true);
   });
 
   it("releases every track when MediaRecorder.start fails", async () => {
     const { dependencies, recorder, track } = setup();
     const secondTrack = new FakeTrack();
-    dependencies.getUserMedia = vi.fn(async () => ({
-      getTracks: () => [track, secondTrack],
-    }) as unknown as MediaStream);
+    dependencies.getUserMedia = vi.fn(
+      async () =>
+        ({
+          getTracks: () => [track, secondTrack],
+        }) as unknown as MediaStream,
+    );
     recorder.start = () => {
       throw new DOMException("cannot start", "InvalidStateError");
     };
 
-    await expect(startCloudRecording(dependencies)).rejects.toThrow("无法启动录音");
+    await expect(startCloudRecording(dependencies)).rejects.toThrow(
+      "无法启动录音",
+    );
     expect(track.stopped).toBe(true);
     expect(secondTrack.stopped).toBe(true);
   });
@@ -154,7 +184,9 @@ describe("cloud recording", () => {
     const recording = await startCloudRecording(dependencies);
     track.end();
 
-    await expect(recording.stopAndTranscribe()).rejects.toThrow("麦克风连接已中断");
+    await expect(recording.stopAndTranscribe()).rejects.toThrow(
+      "麦克风连接已中断",
+    );
     expect(track.stopped).toBe(true);
     expect(transcribe).not.toHaveBeenCalled();
   });
@@ -162,7 +194,11 @@ describe("cloud recording", () => {
   it("rejects recordings over 8 MiB before upload", async () => {
     const { dependencies, recorder, transcribe } = setup();
     const recording = await startCloudRecording(dependencies);
-    recorder.data(new Blob([new Uint8Array(8 * 1024 * 1024 + 1)], { type: recorder.mimeType }));
+    recorder.data(
+      new Blob([new Uint8Array(8 * 1024 * 1024 + 1)], {
+        type: recorder.mimeType,
+      }),
+    );
     await expect(recording.stopAndTranscribe()).rejects.toThrow("8 MiB");
     expect(transcribe).not.toHaveBeenCalled();
   });
@@ -178,14 +214,23 @@ describe("cloud recording", () => {
     recorder.data(new Blob(["limited"], { type: recorder.mimeType }));
     (deadline as (() => void) | null)?.();
     await recording.stopped;
-    await expect(recording.stopAndTranscribe()).resolves.toEqual({ text: "limited", provider: "test" });
+    await expect(recording.stopAndTranscribe()).resolves.toEqual({
+      text: "limited",
+      provider: "test",
+    });
   });
 });
 
 describe("microphone errors", () => {
   it("maps permission and hardware errors to actionable messages", () => {
-    expect(microphoneErrorMessage(new DOMException("denied", "NotAllowedError"))).toMatch(/Android 设置/);
-    expect(microphoneErrorMessage(new DOMException("missing", "NotFoundError"))).toMatch(/未检测到/);
-    expect(microphoneErrorMessage(new DOMException("busy", "NotReadableError"))).toMatch(/占用/);
+    expect(
+      microphoneErrorMessage(new DOMException("denied", "NotAllowedError")),
+    ).toMatch(/Android 设置/);
+    expect(
+      microphoneErrorMessage(new DOMException("missing", "NotFoundError")),
+    ).toMatch(/未检测到/);
+    expect(
+      microphoneErrorMessage(new DOMException("busy", "NotReadableError")),
+    ).toMatch(/占用/);
   });
 });

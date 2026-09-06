@@ -6,10 +6,12 @@ export function DeepLinkBridge() {
   const navigate = useNavigate();
   const location = useLocation();
   const currentPath = useRef(`${location.pathname}${location.search}`);
+  const navigateRef = useRef(navigate);
 
   useEffect(() => {
     currentPath.current = `${location.pathname}${location.search}`;
-  }, [location.pathname, location.search]);
+    navigateRef.current = navigate;
+  }, [location.pathname, location.search, navigate]);
 
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
@@ -17,6 +19,7 @@ export function DeepLinkBridge() {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     let startupPending = true;
+    const startupPath = currentPath.current;
     const startupEventPaths = new Set<string>();
 
     const handleUrls = (urls: string[] | null, source: "event" | "startup") => {
@@ -24,11 +27,12 @@ export function DeepLinkBridge() {
         urls,
         currentPath.current,
         source === "startup" ? startupEventPaths : null,
+        source === "startup" ? startupPath : undefined,
       );
       if (!path) return;
       if (source === "event" && startupPending) startupEventPaths.add(path);
       currentPath.current = path;
-      navigate(path);
+      navigateRef.current(path);
     };
 
     void import("@tauri-apps/plugin-deep-link")
@@ -55,7 +59,9 @@ export function DeepLinkBridge() {
       disposed = true;
       unlisten?.();
     };
-  }, [navigate]);
+    // HashRouter's navigate identity changes with the path. Re-subscribing on
+    // every navigation would replay getCurrent() and reopen an old invitation.
+  }, []);
 
   return null;
 }

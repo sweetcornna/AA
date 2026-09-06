@@ -293,11 +293,6 @@ export async function runCanary({
       (data) => data && !data.error && typeof data._provider === "string",
     );
     requireResult(
-      "agent-query function",
-      await member.functions.invoke("agent-query", { body: { question: "我现在还有欠款吗？" } }),
-      (data) => data && typeof data.answer === "string" && data.answer.length > 0,
-    );
-    requireResult(
       "asr-transcribe function",
       await owner.functions.invoke("asr-transcribe", {
         body: audioFixture(configuration),

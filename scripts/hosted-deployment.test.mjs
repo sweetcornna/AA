@@ -209,7 +209,7 @@ test("produces a stable non-secret source fingerprint", () => {
   assert.equal(result.schemaVersion, 2);
   assert.equal(result.deploymentType, "self-hosted");
   assert.match(result.bundleSha256, /^[a-f0-9]{64}$/);
-  assert.deepEqual(result.functions, ["agent-query", "asr-transcribe", "parse-expense"]);
+  assert.deepEqual(result.functions, ["asr-transcribe", "parse-expense"]);
   assert.ok(result.files.some((entry) => entry.path === "supabase/migrations/0011_production_canary_cleanup.sql"));
   assert.ok(result.files.some((entry) => entry.path === "scripts/verify-production-canary.mjs"));
   assert.ok(result.files.some((entry) => entry.path === "supabase/functions/asr-transcribe/handler.ts"));

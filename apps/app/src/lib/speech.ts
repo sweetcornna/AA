@@ -5,11 +5,15 @@ import { transcribeAudio } from "./api";
 
 const MAX_RECORDING_MS = 60_000;
 const DATA_SLICE_MS = 500;
-const RECORDING_START_ERROR = "无法启动录音，请更新系统 WebView 后重试或直接输入文字。";
+const RECORDING_START_ERROR =
+  "无法启动录音，请更新系统 WebView 后重试或直接输入文字。";
 
 type SpeechRecognitionCtor = new () => any;
 
-type RecorderLike = Pick<MediaRecorder, "mimeType" | "state" | "start" | "stop"> & {
+type RecorderLike = Pick<
+  MediaRecorder,
+  "mimeType" | "state" | "start" | "stop"
+> & {
   ondataavailable: MediaRecorder["ondataavailable"];
   onerror: MediaRecorder["onerror"];
   onstop: MediaRecorder["onstop"];
@@ -18,14 +22,24 @@ type RecorderLike = Pick<MediaRecorder, "mimeType" | "state" | "start" | "stop">
 export interface RecordingDependencies {
   getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
   isTypeSupported: (mimeType: string) => boolean;
-  createRecorder: (stream: MediaStream, options: MediaRecorderOptions) => RecorderLike;
-  transcribe: (blob: Blob, signal?: AbortSignal) => Promise<{ text: string; provider: string }>;
+  createRecorder: (
+    stream: MediaStream,
+    options: MediaRecorderOptions,
+  ) => RecorderLike;
+  transcribe: (
+    blob: Blob,
+    signal?: AbortSignal,
+  ) => Promise<{ text: string; provider: string }>;
   setTimeout: typeof window.setTimeout;
   clearTimeout: typeof window.clearTimeout;
 }
 
 function SRClass(): SpeechRecognitionCtor | null {
-  return (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition ?? null;
+  return (
+    (window as any).SpeechRecognition ??
+    (window as any).webkitSpeechRecognition ??
+    null
+  );
 }
 
 export function isAndroidTauri(): boolean {
@@ -36,21 +50,29 @@ export function webSpeechAvailable(): boolean {
   return !isAndroidTauri() && SRClass() != null;
 }
 
-export function preferredRecordingMimeType(isTypeSupported = MediaRecorder.isTypeSupported): string | null {
+export function preferredRecordingMimeType(
+  isTypeSupported = MediaRecorder.isTypeSupported,
+): string | null {
   return ASR_MIME_TYPES.find((mimeType) => isTypeSupported(mimeType)) ?? null;
 }
 
 export function microphoneErrorMessage(error: unknown): string {
-  const name = error instanceof DOMException
-    ? error.name
-    : typeof error === "object" && error && "name" in error
-      ? String(error.name)
-      : "";
+  const name =
+    error instanceof DOMException
+      ? error.name
+      : typeof error === "object" && error && "name" in error
+        ? String(error.name)
+        : "";
   if (name === "NotAllowedError" || name === "SecurityError") {
     return "麦克风权限被拒绝。若已永久拒绝，请到 Android 设置 → 应用 → AA Ledger → 权限 → 麦克风中开启。";
   }
-  if (name === "NotFoundError" || name === "DevicesNotFoundError") return "未检测到可用麦克风。";
-  if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError") {
+  if (name === "NotFoundError" || name === "DevicesNotFoundError")
+    return "未检测到可用麦克风。";
+  if (
+    name === "NotReadableError" ||
+    name === "TrackStartError" ||
+    name === "AbortError"
+  ) {
     return "麦克风被其他应用占用或录音已中断，请稍后重试。";
   }
   return "无法访问麦克风，请检查权限后重试或直接输入文字。";
@@ -82,7 +104,10 @@ export function startWebSpeech(cb: {
     }
     cb.onText((final + interim).trim());
   };
-  rec.onerror = (event: any) => cb.onError(event?.error === "not-allowed" ? "麦克风权限被拒绝" : "语音识别出错");
+  rec.onerror = (event: any) =>
+    cb.onError(
+      event?.error === "not-allowed" ? "麦克风权限被拒绝" : "语音识别出错",
+    );
   rec.onend = () => cb.onEnd();
   rec.start();
   return () => {
@@ -102,11 +127,17 @@ export interface Recording {
 }
 
 function browserRecordingDependencies(): RecordingDependencies {
-  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-    throw new Error("当前系统 WebView 不支持录音，请更新后重试或直接输入文字。");
+  if (
+    !navigator.mediaDevices?.getUserMedia ||
+    typeof MediaRecorder === "undefined"
+  ) {
+    throw new Error(
+      "当前系统 WebView 不支持录音，请更新后重试或直接输入文字。",
+    );
   }
   return {
-    getUserMedia: (constraints) => navigator.mediaDevices.getUserMedia(constraints),
+    getUserMedia: (constraints) =>
+      navigator.mediaDevices.getUserMedia(constraints),
     isTypeSupported: (mimeType) => MediaRecorder.isTypeSupported(mimeType),
     createRecorder: (stream, options) => new MediaRecorder(stream, options),
     transcribe: transcribeAudio,
@@ -120,7 +151,10 @@ export async function startCloudRecording(
   dependencies: RecordingDependencies = browserRecordingDependencies(),
 ): Promise<Recording> {
   const mimeType = preferredRecordingMimeType(dependencies.isTypeSupported);
-  if (!mimeType) throw new Error("当前系统 WebView 不支持可上传的录音格式，请更新后重试或直接输入文字。");
+  if (!mimeType)
+    throw new Error(
+      "当前系统 WebView 不支持可上传的录音格式，请更新后重试或直接输入文字。",
+    );
 
   let stream: MediaStream | null = null;
   try {
@@ -153,7 +187,7 @@ export async function startCloudRecording(
     for (const track of stream.getTracks()) track.stop();
     stream = null;
   };
-  let limitTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let limitTimer: number | null = null;
   const clearLimitTimer = () => {
     if (limitTimer === null) return;
     dependencies.clearTimeout(limitTimer);
@@ -195,16 +229,23 @@ export async function startCloudRecording(
   };
   recorder.onstop = settleCapture;
   for (const track of stream.getTracks()) {
-    track.addEventListener("ended", () => {
-      if (settled || canceled) return;
-      terminalError = new Error("麦克风连接已中断，请重试。");
-      stopRecorder();
-    }, { once: true });
+    track.addEventListener(
+      "ended",
+      () => {
+        if (settled || canceled) return;
+        terminalError = new Error("麦克风连接已中断，请重试。");
+        stopRecorder();
+      },
+      { once: true },
+    );
   }
 
   try {
     recorder.start(DATA_SLICE_MS);
-    limitTimer = dependencies.setTimeout(() => stopRecorder(), MAX_RECORDING_MS);
+    limitTimer = dependencies.setTimeout(
+      () => stopRecorder(),
+      MAX_RECORDING_MS,
+    );
   } catch {
     clearLimitTimer();
     cleanup();
@@ -220,8 +261,11 @@ export async function startCloudRecording(
         if (canceled) throw new Error("语音转写已取消");
         if (terminalError) throw terminalError;
 
-        const blob = new Blob(chunks, { type: recorder.mimeType || mimeType });
-        if (blob.size === 0) throw new Error("录音为空，请重试或直接输入文字。");
+        // WebKit may expand audio/mp4 to audio/mp4;codecs=mp4a.40.2. Preserve
+        // the supported MIME negotiated at construction for the upload API.
+        const blob = new Blob(chunks, { type: mimeType });
+        if (blob.size === 0)
+          throw new Error("录音为空，请重试或直接输入文字。");
         uploadController = new AbortController();
         return dependencies.transcribe(blob, uploadController.signal);
       });

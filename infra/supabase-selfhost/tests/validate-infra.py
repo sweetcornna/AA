@@ -205,7 +205,6 @@ def write_artifact_fixture(runtime: Path, fingerprint: dict, upstream_commit: st
     template = runtime / "templates" / fingerprint["bundleSha256"] / "confirmation.html"
     entries = []
     for relative in (
-        "agent-query/index.ts",
         "asr-transcribe/index.ts",
         "main/index.ts",
         "parse-expense/index.ts",
@@ -355,7 +354,6 @@ def main() -> None:
         'member.from("expenses")',
         'member.rpc("create_settlement"',
         'owner.functions.invoke("parse-expense"',
-        'member.functions.invoke("agent-query"',
         'owner.functions.invoke("asr-transcribe"',
         "finally {",
         'owner.rpc("cleanup_canary_circle"',

@@ -10,7 +10,7 @@ on:
         type: choice
         options: [candidate, publish]
       tag:
-        description: "Existing immutable tag (for example v0.0.5)"
+        description: "Existing immutable tag (for example v0.0.6)"
         required: true
         type: string
       backend_fingerprint:
@@ -59,7 +59,7 @@ jobs:
           EXPECTED_APK_SHA256: ${{ inputs.expected_apk_sha256 }}
         run: |
           set -euo pipefail
-          [[ "$TAG" == "v0.0.5" ]]
+          [[ "$TAG" == "v0.0.6" ]]
           [[ "$BACKEND_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
           # The checkout already carries the triggering tag, so a plain fetch
           # aborts with "would clobber existing tag". Forcing the refresh is safe:
@@ -82,8 +82,8 @@ jobs:
           )
           version="${version_contract[0]}"
           version_code="${version_contract[1]}"
-          [[ "$version" == "0.0.5" ]]
-          [[ "$version_code" == "5" ]]
+          [[ "$version" == "0.0.6" ]]
+          [[ "$version_code" == "6" ]]
           [[ "$TAG" == "v$version" ]]
           fingerprint="$(node scripts/hosted-deployment.mjs fingerprint | node -e "let value=''; process.stdin.on('data', chunk => value += chunk); process.stdin.on('end', () => process.stdout.write(JSON.parse(value).bundleSha256))")"
           [[ "$fingerprint" == "$BACKEND_FINGERPRINT" ]]
@@ -386,8 +386,22 @@ jobs:
         run: |
           set -euo pipefail
           assets=(dist/candidate/*.apk dist/candidate/*.apk.sha256)
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          Android 正式版：release 签名、arm64-v8a、Android 7+。
+
+          - 修复退出圈子：结清后可退出；圈主可选择接任人，保留历史账目。
+          - 全新原生风格界面、响应式布局、SVG 图标及「同享」应用标志。
+          - 移除聊天助手，保留一句话记账、语音输入及普通结算。
+          - 修复跨账号缓存、成员分摊、深链导航和录音取消/恢复问题。
+
+          可直接覆盖安装 v0.0.3–v0.0.5；v0.0.2 debug 包需先卸载一次。
+          已完成自动化业务回归和模拟器验收；候选包通过 hash、签名证书、application ID、version/versionCode、ABI 与 production origin 校验。
+
+          本版未做真机验收：物理设备的安装、登录、升级、机型兼容、麦克风权限与录音、移动网络行为均尚未广泛验证。
+          NOTES
+          printf '\nAPK SHA-256: `%s`\n' "$EXPECTED_APK_SHA256" >> "$RUNNER_TEMP/release-notes.md"
           gh release create "$TAG" "${assets[@]}" \
             --repo "$REPOSITORY" \
             --verify-tag \
             --title "AA 记账 $TAG" \
-            --notes "Android 正式版：release 签名、arm64-v8a、Android 7+。本版新增手动邀请与活动流筛选（全部／与我相关）。可直接覆盖安装 v0.0.3 与 v0.0.4；v0.0.2 debug 包需先卸载一次。APK SHA-256: $EXPECTED_APK_SHA256。已完成静态 hash、签名证书、application ID、version/versionCode、ABI 与 production origin 校验。本版未做真机验收：安装、登录、升级、机型兼容、麦克风权限与录音、移动网络行为均尚未广泛验证，请自行评估后再安装。"
+            --notes-file "$RUNNER_TEMP/release-notes.md"

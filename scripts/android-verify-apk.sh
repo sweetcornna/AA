@@ -34,8 +34,8 @@ if [[ "$AA_ANDROID_STAGING_ORIGIN" != "https://aa-staging-api.cornna.xyz" ]]; th
   echo "AA_ANDROID_STAGING_ORIGIN must be exactly https://aa-staging-api.cornna.xyz." >&2
   exit 1
 fi
-if [[ "$AA_ANDROID_EXPECTED_VERSION_CODE" != "5" ]]; then
-  echo "AA_ANDROID_EXPECTED_VERSION_CODE must be exactly 5 for version 0.0.5." >&2
+if [[ "$AA_ANDROID_EXPECTED_VERSION_CODE" != "6" ]]; then
+  echo "AA_ANDROID_EXPECTED_VERSION_CODE must be exactly 6 for version 0.0.6." >&2
   exit 1
 fi
 
@@ -79,7 +79,7 @@ VERSION_NAME="$(printf '%s\n' "$BADGING" | grep -o "versionName='[^']*'" | head 
 VERSION_CODE="$(printf '%s\n' "$BADGING" | grep -o "versionCode='[^']*'" | head -1 | cut -d"'" -f2)"
 CONFIG_VERSION="$(node -e "const fs = require('node:fs'); console.log(JSON.parse(fs.readFileSync(process.argv[1], 'utf8')).version)" "$ROOT_DIR/apps/app/src-tauri/tauri.conf.json")"
 CONFIG_VERSION_CODE="$(node -e "const fs = require('node:fs'); console.log(JSON.parse(fs.readFileSync(process.argv[1], 'utf8')).bundle.android.versionCode)" "$ROOT_DIR/apps/app/src-tauri/tauri.conf.json")"
-[[ "$CONFIG_VERSION" == "0.0.5" ]] || { echo "Tauri release version must be exactly 0.0.5." >&2; exit 1; }
+[[ "$CONFIG_VERSION" == "0.0.6" ]] || { echo "Tauri release version must be exactly 0.0.6." >&2; exit 1; }
 [[ "$CONFIG_VERSION_CODE" == "$AA_ANDROID_EXPECTED_VERSION_CODE" ]] || { echo "Tauri Android versionCode $CONFIG_VERSION_CODE does not match expected $AA_ANDROID_EXPECTED_VERSION_CODE." >&2; exit 1; }
 [[ "$VERSION_NAME" == "$CONFIG_VERSION" ]] || { echo "APK version $VERSION_NAME does not match Tauri version $CONFIG_VERSION." >&2; exit 1; }
 [[ "$VERSION_CODE" == "$AA_ANDROID_EXPECTED_VERSION_CODE" ]] || { echo "APK versionCode $VERSION_CODE does not match expected $AA_ANDROID_EXPECTED_VERSION_CODE." >&2; exit 1; }
@@ -139,43 +139,20 @@ if [[ -n "$(find "$EXTRACTED" -type f -name '*.map' -print -quit)" ]]; then
   exit 1
 fi
 
-RUNTIME_BUNDLE="$(find "$CODEGEN_DIR" -path '*/out/tauri-codegen-assets/*' -type f -name '*.js' -size +100000c -size -1000000c -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1 || true)"
-if [[ -z "$RUNTIME_BUNDLE" ]]; then
-  echo "Could not locate the Tauri runtime bundle used by this local APK build." >&2
-  exit 1
-fi
 NATIVE_LIB="$EXTRACTED/lib/arm64-v8a/libaa_lib.so"
 if "$READELF" --sections "$NATIVE_LIB" | grep -Eq '\.(debug_info|debug_line|debug_str)([[:space:]]|$)'; then
   echo "Release native library contains debug sections." >&2
   exit 1
 fi
-RUNTIME_PREFIX="$(mktemp)"
-trap 'rm -rf "$EXTRACTED" "$SCAN_FILE" "$RUNTIME_PREFIX"' EXIT
-dd if="$RUNTIME_BUNDLE" of="$RUNTIME_PREFIX" bs=64 count=1 status=none
-if ! python3 - "$NATIVE_LIB" "$RUNTIME_PREFIX" <<'PY'
-import sys
-from pathlib import Path
-native = Path(sys.argv[1]).read_bytes()
-prefix = Path(sys.argv[2]).read_bytes()
-raise SystemExit(0 if prefix in native else 1)
-PY
-then
-  echo "Local Tauri runtime bundle does not match the APK native library." >&2
-  exit 1
-fi
-if command -v brotli >/dev/null; then
-  DECOMPRESSED_BUNDLE="$(mktemp)"
-  trap 'rm -rf "$EXTRACTED" "$SCAN_FILE" "$RUNTIME_PREFIX" "$DECOMPRESSED_BUNDLE"' EXIT
-  brotli -d -c "$RUNTIME_BUNDLE" > "$DECOMPRESSED_BUNDLE"
-  require_text "$(<"$DECOMPRESSED_BUNDLE")" "invalid build origin marker" "APK does not contain the production Supabase origin marker."
-  require_text "$(<"$DECOMPRESSED_BUNDLE")" "$AA_ANDROID_PRODUCTION_ORIGIN" "APK does not contain the expected production Supabase origin."
-  require_text "$(<"$DECOMPRESSED_BUNDLE")" "$AA_ANDROID_PRODUCTION_PUBLIC_KEY" "APK does not contain the deployed production publishable key."
-  if grep -aF "$AA_ANDROID_STAGING_ORIGIN" "$DECOMPRESSED_BUNDLE" >/dev/null; then
-    echo "APK contains the staging Supabase origin." >&2
-    exit 1
-  fi
-else
-  echo "brotli is required to verify the Tauri runtime bundle." >&2
+DECOMPRESSED_BUNDLE="$(mktemp)"
+trap 'rm -rf "$EXTRACTED" "$SCAN_FILE" "$DECOMPRESSED_BUNDLE"' EXIT
+node "$SCRIPT_DIR/verify-android-assets.mjs" \
+  "$NATIVE_LIB" "$CODEGEN_DIR" "$ROOT_DIR/apps/app/dist" "$DECOMPRESSED_BUNDLE"
+require_text "$(<"$DECOMPRESSED_BUNDLE")" "invalid build origin marker" "APK does not contain the production Supabase origin marker."
+require_text "$(<"$DECOMPRESSED_BUNDLE")" "$AA_ANDROID_PRODUCTION_ORIGIN" "APK does not contain the expected production Supabase origin."
+require_text "$(<"$DECOMPRESSED_BUNDLE")" "$AA_ANDROID_PRODUCTION_PUBLIC_KEY" "APK does not contain the deployed production publishable key."
+if grep -aF "$AA_ANDROID_STAGING_ORIGIN" "$DECOMPRESSED_BUNDLE" >/dev/null; then
+  echo "APK contains the staging Supabase origin." >&2
   exit 1
 fi
 

@@ -84,7 +84,6 @@ deno check \
   --config supabase/functions/deno.json \
   --lock supabase/functions/deno.lock \
   --frozen \
-  supabase/functions/agent-query/index.ts \
   supabase/functions/asr-transcribe/index.ts \
   supabase/functions/parse-expense/index.ts
 ```
@@ -121,7 +120,7 @@ sudo infra/supabase-selfhost/scripts/build-functions.sh /srv/aa/production/runti
 dual-stack 则分别为 staging 和 production 准备相同 fingerprint。`build-functions.sh`：
 
 1. 读取 fixed upstream router；
-2. 用固定 lock 对三个 AA function 和 router 执行 Deno bundle；
+2. 用固定 lock 对两个 AA function 和 router 执行 Deno bundle；
 3. 以 source fingerprint 作为 immutable artifact 目录；
 4. 将函数和 OTP template 设为只读；
 5. production Compose 只读挂载 artifact，不挂载 Git 工作区。
@@ -223,7 +222,7 @@ sudo infra/supabase-selfhost/scripts/compose.sh \
 
 `run-migrations.py` 在一个 PostgreSQL session 内持有 advisory lock，并维护 `aa_deploy.schema_migrations(filename, sha256)`：
 
-- 按 `0001`–`0012` 顺序应用；
+- 按 `0001`–`0014` 顺序应用；
 - 单文件事务；
 - 已应用 hash 改变立即失败；
 - 只允许新增 forward migration；
@@ -402,7 +401,7 @@ node scripts/verify-production-canary.mjs request-otp
 node scripts/verify-production-canary.mjs run
 ```
 
-脚本覆盖 password/OTP session、匿名 RPC 拒绝、圈子/RLS/Realtime、邀请、expense、结算、零余额、三个 function 和一次真实 ASR；`0011` 的幂等 `create_canary_circle` 使用客户端预分配 UUID 和 16-hex run ID；即使服务端已提交但响应丢失，`finally` 仍能用已知 UUID 调用窄范围 `cleanup_canary_circle`。脚本在接受邀请前要求第二账号看不到 owner-only expense，随后再验证成员可读。清理只删除本次圈子数据，不删除 Auth 账号或 `asr_usage`，避免成为 quota bypass。任一步或精确清理失败都禁止 candidate。
+脚本覆盖 password/OTP session、匿名 RPC 拒绝、圈子/RLS/Realtime、邀请、expense、结算、零余额、两个 function 和一次真实 ASR；`0011` 的幂等 `create_canary_circle` 使用客户端预分配 UUID 和 16-hex run ID；即使服务端已提交但响应丢失，`finally` 仍能用已知 UUID 调用窄范围 `cleanup_canary_circle`。脚本在接受邀请前要求第二账号看不到 owner-only expense，随后再验证成员可读。清理只删除本次圈子数据，不删除 Auth 账号或 `asr_usage`，避免成为 quota bypass。任一步或精确清理失败都禁止 candidate。
 
 production evidence 只记录：commit、bundle SHA-256、image digests、migration filename/hash、目标身份、测试 case/status、backup/restore ID、证书公开信息和 approver。不得记录任何 secret、个人数据或完整终端 transcript。
 

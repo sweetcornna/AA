@@ -44,26 +44,25 @@
 
 ## 截图
 
-| 登录 | 圈子 | 圈子详情 |
-|:---:|:---:|:---:|
-| ![登录](docs/screenshots/login.png) | ![圈子](docs/screenshots/circles.png) | ![详情](docs/screenshots/circle-detail.png) |
-| **记一笔(含 AI 一句话)** | **动态** | **AI 助手** |
-| ![记一笔](docs/screenshots/add-expense.png) | ![动态](docs/screenshots/activity.png) | ![助手](docs/screenshots/assistant.png) |
+当前改版的功能与平台验证详见[验收记录](docs/UI_REDESIGN_QA.md)。
 
-| Android 截图 | iOS 模拟器 |
+| 桌面圈子 | 桌面详情 |
 |:---:|:---:|
-| ![Android](docs/screenshots/android.png) | ![iOS](docs/screenshots/ios.png) |
+| ![圈子](docs/screenshots/redesign-circles-desktop.png) | ![详情](docs/screenshots/redesign-detail-desktop.png) |
+
+| 手机详情 | Android 原生 |
+|:---:|:---:|
+| ![手机详情](docs/screenshots/redesign-detail-mobile.png) | ![Android](docs/screenshots/redesign-android.png) |
 
 ---
 
 ## 功能
 
-- **圈子共享账本** —— 建圈,邀请链接 / 二维码拉人,成员实时同步。
+- **圈子共享账本** —— 建圈、邀请链接 / 二维码加入、实时同步；结清后退出，圈主可指定接任人，历史账目保留。
 - **三种分账** —— 平均 / 精确金额 / 份额(百分比),总和永远等于账单,零头按固定规则分。
 - **余额与结算** —— 「谁欠谁多少」一目了然,自动给出最少转账方案(最多 n−1 笔),可标记已付。
 - **实时同步** —— A 记一笔,B 在 1–2 秒内自动看到。
 - **AI 一句话记账** —— 一句话(或语音)自动解析金额 / 付款人 / 分摊,填好表单等你确认;每笔记录 AI 来源与置信度可审计。
-- **AI 助手** —— 问账本(花销 / 结余 / 谁付的);让它帮你结账时先出确认卡片,点确认才落账。
 - **AI 厂商无关、可插拔** —— Claude / OpenAI / 规则兜底,`ai_settings` 表运行时切换或一键关停;没配 API key 时回退到规则 provider。
 - **多平台原生** —— Win / macOS / Linux / Android / iOS 共用 Tauri/React 代码；各平台实际发布与验收状态见下方表格。
 
@@ -143,7 +142,7 @@ npm run build --workspace=@aa/app          # 生产构建
 │ Postgres + RLS · Auth(邮箱密码/六位邮箱 OTP) · Realtime              │
 │ RPC: create_circle / create_expense / create_invitation / accept…     │
 │ View: circle_balances(净余额单一权威)                                 │
-│ Edge Functions(Deno): parse-expense · agent-query · asr-transcribe    │
+│ Edge Functions(Deno): parse-expense · asr-transcribe    │
 └───────────────────────────────────────────────────────────────────────┘
              ▲
              │ import(同源)
@@ -177,9 +176,9 @@ AA/
 ├─ packages/shared/        跨端纯逻辑:money / split / balances / settle / zod schema (+ 测试)
 ├─ supabase/
 │  ├─ migrations/          表 → RLS → 视图 → RPC → grants
-│  └─ functions/           parse-expense · agent-query · asr-transcribe (Edge Functions)
+│  └─ functions/           parse-expense · asr-transcribe (Edge Functions)
 ├─ apps/app/
-│  ├─ src/                 features: auth / circles / expenses / activity / assistant / profile
+│  ├─ src/                 features: auth / circles / expenses / activity / profile
 │  └─ src-tauri/           Tauri v2 工程 + gen/(Android/iOS 原生工程,含构建修复)
 ├─ scripts/                构建 / 冒烟 / E2E 脚本(android-* · ios-* · verify-* · shot-*)
 └─ docs/                   截图等
@@ -187,12 +186,12 @@ AA/
 
 ### 平台状态
 
-| 平台 | 当前公开包 | 仓库构建路径 | v0.0.5 验收状态 |
+| 平台 | 当前公开包 | 仓库构建路径 | v0.0.6 验收状态 |
 |---|:---:|:---:|:---:|
 | macOS / Windows / Linux 桌面 | v0.0.2 技术演示 | 已有 | 不在本次发布范围 |
-| Android | v0.0.4 release APK | release arm64 APK | 走真机 QA 豁免路径：未做真机验收，Release notes 已如实披露 |
+| Android | [最新 release APK](https://github.com/sweetcornna/AA/releases/latest) | release arm64 APK | 走真机 QA 豁免路径：未做真机验收，Release notes 已如实披露 |
 | iOS | 无公开包 | 已有 | 不在本次发布范围 |
-| Web | [已上线](https://sweetcornna.github.io/AA/) | 已有 + GitHub Pages workflow | 站点可访问，登录链路已实测打通；未做多浏览器与真机广泛验收 |
+| Web | [已上线](https://sweetcornna.github.io/AA/) | 已有 + GitHub Pages workflow | 本地 Chromium/Firefox/WebKit 回归通过；物理真机与本轮生产验证码/云语音未验收 |
 
 ---
 
@@ -200,5 +199,5 @@ AA/
 
 - 本地 Supabase 的 anon key 是标准本地开发密钥(公开、非生产),`.env` 已被 `.gitignore` 排除,仓库只含 `.env.example` 占位符。
 - 桌面端公开的 v0.0.2 是未注入公开后端的技术演示包。Android 正式版只允许通过手动 `candidate` → `publish` 两阶段 workflow 发布：候选构建一次，publish 原样上传同一 APK；tag 本身不会自动发布。
-- AI 解析走 Edge Function `parse-expense`；本地可配置受支持 provider，Azure 托管栈固定使用 server-side OpenAI 配置，未配置可用 key 时回退到规则解析。
+- AI 解析走 Edge Function `parse-expense`；本地可配置受支持 provider，P2 托管栈固定使用 server-side OpenAI 配置，未配置可用 key 时回退到规则解析。
 - 移动端构建踩过的坑(本机 JVM 的 AES-GCM intrinsic 导致 TLS 下载损坏、`npm run` 切 cwd 致 cargo 用错 toolchain 等)已固化进 `gradle.properties` / `rust-toolchain.toml` / `scripts/`。

@@ -9,7 +9,7 @@ import {
   Input,
   NavBar,
   Spinner,
-  Svg,
+  Icon,
 } from "../../components/ui";
 import { acceptInvitation } from "../../lib/api";
 import {
@@ -20,25 +20,12 @@ import {
 } from "../../lib/inviteLink";
 import { isNativeShell } from "../../lib/web";
 
-const GroupGlyph = () => (
-  <Svg size={40}>
-    <circle cx="9" cy="8.4" r="2.9" />
-    <path d="M3.4 18.8c0-3.1 2.5-5 5.6-5s5.6 1.9 5.6 5" />
-    <path d="M15.8 5.8a2.9 2.9 0 0 1 0 5.5" />
-    <path d="M16.8 13.9c2.4.3 4 2 4 4.9" />
-  </Svg>
-);
-
 export function JoinPage() {
   const [params] = useSearchParams();
   const tokenParams = params.getAll("token");
-  const hasOnlyToken = [...params.keys()].every(
-    (key) => key === "token",
-  );
+  const hasOnlyToken = [...params.keys()].every((key) => key === "token");
   const urlToken =
-    hasOnlyToken &&
-    tokenParams.length === 1 &&
-    isInviteToken(tokenParams[0])
+    hasOnlyToken && tokenParams.length === 1 && isInviteToken(tokenParams[0])
       ? tokenParams[0]
       : null;
   const urlState =
@@ -53,6 +40,7 @@ export function JoinPage() {
   const attempted = useRef<string | null>(null);
   const nextAttemptId = useRef(0);
   const activeAttemptId = useRef<number | null>(null);
+  const mounted = useRef(false);
   const [input, setInput] = useState("");
   const [inputError, setInputError] = useState<string | null>(null);
 
@@ -70,20 +58,29 @@ export function JoinPage() {
   const joinToken = (token: string) => {
     const attemptId = ++nextAttemptId.current;
     activeAttemptId.current = attemptId;
-    join.mutate(token, {
-      onSuccess: async (circleId) => {
-        if (activeAttemptId.current !== attemptId) return;
+    void join
+      .mutateAsync(token)
+      .then((circleId) => {
+        if (!mounted.current || activeAttemptId.current !== attemptId) return;
         setInput("");
-        if (activeAttemptId.current !== attemptId) return;
         navigate(`/circles/${circleId}`, { replace: true });
-      },
-    });
+      })
+      .catch(() => {
+        /* mutation state displays the error */
+      });
   };
 
   const leaveJoinPage = () => {
     activeAttemptId.current = null;
     navigate("/", { replace: true });
   };
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (urlState !== "automatic") {
@@ -114,16 +111,12 @@ export function JoinPage() {
   };
 
   return (
-    <div className="mx-auto min-h-screen max-w-md px-4 pt-3">
-      <NavBar
-        title="加入圈子"
-        backLabel="圈子"
-        onBack={leaveJoinPage}
-      />
+    <div className="page-form">
+      <NavBar title="加入圈子" backLabel="圈子" onBack={leaveJoinPage} />
 
       <div className="flex flex-col items-center px-2 pb-20 pt-10 text-center">
         <IconTile size={78} radius={20}>
-          <GroupGlyph />
+          <Icon name="invite" size={38} />
         </IconTile>
         <h1 className="mt-5 text-[21px] font-semibold tracking-[-0.02em]">
           加入朋友的圈子
@@ -166,9 +159,7 @@ export function JoinPage() {
               className="mt-2 px-4 text-[13px] leading-relaxed"
               style={{
                 color:
-                  inputError || join.error
-                    ? "var(--red)"
-                    : "var(--label2)",
+                  inputError || join.error ? "var(--red)" : "var(--label2)",
               }}
             >
               {inputError ||
