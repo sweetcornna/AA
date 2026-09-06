@@ -1,0 +1,7 @@
+[
+  {"index":1,"title":"同享 · 应用图标","src":"exports/tongxiang-app-icon.png","href":"exports/tongxiang-app-icon.svg","route":"deterministic-svg-export"},
+  {"index":2,"title":"品牌组合","src":"exports/tongxiang-lockup.png","href":"exports/tongxiang-lockup.png","route":"deterministic-export"},
+  {"index":3,"title":"登录页 · 实际界面","src":"screenshots/login-mobile.png","href":"screenshots/login-mobile.png","route":"browser-screenshot"},
+  {"index":4,"title":"圈子页 · 实际界面","src":"screenshots/circles-desktop.png","href":"screenshots/circles-desktop.png","route":"browser-screenshot"},
+  {"index":5,"title":"16–96px 尺寸检查","src":"screenshots/small-sizes.png","href":"screenshots/small-sizes.png","route":"svg-render-check"}
+]

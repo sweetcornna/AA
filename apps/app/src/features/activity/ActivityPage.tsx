@@ -71,9 +71,9 @@ export function ActivityPage() {
   }
 
   return (
-    <div className="mx-auto max-w-md px-4 pt-3">
-      <header className="mb-3 flex items-end justify-between">
-        <h1 className="text-[32px] font-bold tracking-[-0.022em]">动态</h1>
+    <div className="page">
+      <header className="page-header flex-wrap">
+        <h1>动态</h1>
         <Segmented
           className="mb-1"
           value={scope}
@@ -111,7 +111,10 @@ export function ActivityPage() {
               : "还没有与你有关的动态。"}
           </p>
           {scope === "mine" && (
-            <p className="mx-auto mt-2 max-w-[270px] text-[13px] leading-relaxed" style={{ color: "var(--label3)" }}>
+            <p
+              className="mx-auto mt-2 max-w-[270px] text-[13px] leading-relaxed"
+              style={{ color: "var(--label3)" }}
+            >
               你付款、参与分摊、收付款或记录账目后，会显示在这里。
             </p>
           )}
@@ -121,7 +124,12 @@ export function ActivityPage() {
           .filter((k) => groups.has(k))
           .map((k) => (
             <div key={k} className="mb-5">
-              <div className="mb-[7px] px-1.5 text-[13px] font-semibold" style={{ color: "var(--label3)" }}>{k}</div>
+              <div
+                className="mb-[7px] px-1.5 text-[13px] font-semibold"
+                style={{ color: "var(--label3)" }}
+              >
+                {k}
+              </div>
               <Card className="rounded-[14px]">
                 {groups.get(k)!.map((it, i) => {
                   const settlement =
@@ -131,12 +139,17 @@ export function ActivityPage() {
                   return (
                     <div key={`${it.kind}-${it.id}`}>
                       {i > 0 && <Hairline inset={68} />}
-                      <Link to={`/circles/${it.circleId}`} className="flex items-center gap-3 py-3 pl-4 pr-3.5 active:bg-black/5">
+                      <Link
+                        to={`/circles/${it.circleId}`}
+                        className="flex items-center gap-3 py-3 pl-4 pr-3.5 active:bg-black/5"
+                      >
                         <IconTile size={40} radius={12}>
                           {it.kind === "expense" ? (
                             <CategoryGlyph category={it.category} />
                           ) : (
-                            <Svg size={22} w={2.1}><path d="M20 7 9.5 17.5 4 12" /></Svg>
+                            <Svg size={22} w={2.1}>
+                              <path d="M20 7 9.5 17.5 4 12" />
+                            </Svg>
                           )}
                         </IconTile>
                         <div className="min-w-0 flex-1">
@@ -145,7 +158,10 @@ export function ActivityPage() {
                               ? expenseActivityTitle(it)
                               : settlementActivityTitle(it)}
                           </div>
-                          <div className="mt-0.5 text-[12.5px]" style={{ color: "var(--label2)" }}>
+                          <div
+                            className="mt-0.5 text-[12.5px]"
+                            style={{ color: "var(--label2)" }}
+                          >
                             {it.circleName} · {ago(it.at)}
                           </div>
                         </div>
@@ -158,15 +174,24 @@ export function ActivityPage() {
                                 : "var(--ink)",
                             }}
                           >
-                            {it.kind === "expense" ? "总额 " : settlement?.prefix}
+                            {it.kind === "expense"
+                              ? "总额 "
+                              : settlement?.prefix}
                             {formatMoney(it.amountMinor, it.currency)}
                           </div>
                           {it.kind === "expense" && it.myOwedMinor !== null ? (
-                            <div className="mt-0.5 text-[12px]" style={{ color: "var(--label2)" }}>
-                              我的份额 {formatMoney(it.myOwedMinor, it.currency)}
+                            <div
+                              className="mt-0.5 text-[12px]"
+                              style={{ color: "var(--label2)" }}
+                            >
+                              我的份额{" "}
+                              {formatMoney(it.myOwedMinor, it.currency)}
                             </div>
                           ) : it.kind === "settlement" ? (
-                            <div className="mt-0.5 text-[12px]" style={{ color: "var(--label2)" }}>
+                            <div
+                              className="mt-0.5 text-[12px]"
+                              style={{ color: "var(--label2)" }}
+                            >
                               {settlement!.status}
                             </div>
                           ) : null}

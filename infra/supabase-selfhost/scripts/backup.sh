@@ -74,8 +74,10 @@ docker compose --project-name "$AA_STACK_ID" --env-file "$ENV_FILE" -f "$COMPOSE
 toc_pid="$!"
 docker compose --project-name "$AA_STACK_ID" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T db \
   pg_dump -U postgres -d postgres --format=custom | \
-  tee "$toc_fifo" | \
+  tee --output-error=warn-nopipe "$toc_fifo" | \
   age --recipient "$BACKUP_AGE_RECIPIENT" --output "$partial"
+# pg_restore --list may close its pipe as soon as it reads the TOC. Keep
+# feeding the complete archive to age, and still fail if the TOC check failed.
 wait "$toc_pid"
 toc_pid=""
 test -s "$partial"

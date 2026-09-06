@@ -44,8 +44,23 @@ export default defineConfig(({ command, mode }) => {
     envPrefix: ["VITE_", "TAURI_ENV_"],
     build: {
       // Tauri uses Chromium on Windows/Linux and WebKit on macOS/iOS.
-      target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
+      target:
+        process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
       sourcemap: false,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules/")) return;
+            if (id.includes("/@supabase/")) return "supabase";
+            if (id.includes("/@tanstack/")) return "query";
+            if (/\/node_modules\/(react|react-dom|scheduler)\//.test(id))
+              return "react";
+            if (/\/node_modules\/(react-router|react-router-dom)\//.test(id))
+              return "router";
+            if (id.includes("/node_modules/zod/")) return "schema";
+          },
+        },
+      },
     },
   };
 });

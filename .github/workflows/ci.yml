@@ -61,7 +61,6 @@ jobs:
         run: |
           deno check --config supabase/functions/deno.json --lock supabase/functions/deno.lock --frozen \
             supabase/functions/parse-expense/index.ts \
-            supabase/functions/agent-query/index.ts \
             supabase/functions/asr-transcribe/index.ts
           deno test \
             --allow-env=ANTHROPIC_API_KEY,ANTHROPIC_MODEL,OPENAI_API_KEY,OPENAI_BASE_URL,OPENAI_MODEL,LLM_PROVIDER \
@@ -78,7 +77,6 @@ jobs:
             test -f "$runtime_root"/functions/*/fingerprint.json
             test -f "$runtime_root"/functions/*/artifact-manifest.json
             test -f "$runtime_root"/functions/*/main/index.ts
-            test -f "$runtime_root"/functions/*/agent-query/index.ts
             test -f "$runtime_root"/functions/*/asr-transcribe/index.ts
             test -f "$runtime_root"/functions/*/parse-expense/index.ts
           done
@@ -88,6 +86,54 @@ jobs:
             "$runtime_b"/templates/*/confirmation.html
       - name: Web build
         run: npm run build --workspace=@aa/app
+
+  regression:
+    name: Local database and browser regression
+    needs: quality
+    runs-on: ubuntu-latest
+    env:
+      VITE_SUPABASE_URL: http://127.0.0.1:54321
+      VITE_SUPABASE_PUBLISHABLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
+      VITE_WEB_ORIGIN: ""
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - name: Provide an audio output for real browser recording tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=ci_audio
+          pactl set-default-sink ci_audio
+      - name: Start isolated local backend
+        run: |
+          npx --yes supabase@2.107.0 start -x studio,imgproxy,logflare,vector,supavisor
+          npx --yes supabase@2.107.0 functions serve > "$RUNNER_TEMP/aa-functions.log" 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail -X OPTIONS http://127.0.0.1:54321/functions/v1/parse-expense; then
+              break
+            fi
+            sleep 2
+          done
+          curl --silent --fail -X OPTIONS http://127.0.0.1:54321/functions/v1/parse-expense
+      - name: Database permissions and concurrent departure
+        run: npm run test:backend
+      - name: Browser business flows and visual QA
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: browser-regression
+          path: |
+            apps/app/playwright-report/
+            apps/app/test-results/
+            .artifacts/ui-qa/
+          retention-days: 7
 
   desktop:
     name: Desktop build (${{ matrix.os }})

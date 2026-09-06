@@ -40,7 +40,7 @@ WORK_DIR="$(mktemp -d "$RUNTIME_ROOT/.functions.XXXXXX")"
 trap 'chmod -R u+w "$WORK_DIR" 2>/dev/null || true; rm -rf "$WORK_DIR"' EXIT
 mkdir -p "$WORK_DIR/functions/main"
 
-for name in agent-query asr-transcribe parse-expense; do
+for name in asr-transcribe parse-expense; do
   mkdir -p "$WORK_DIR/functions/$name"
   deno bundle \
     --config "$ROOT_DIR/supabase/functions/deno.json" \

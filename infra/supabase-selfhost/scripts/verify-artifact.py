@@ -8,12 +8,11 @@ import stat
 from pathlib import Path, PurePosixPath
 
 EXPECTED_PATHS = [
-    "agent-query/index.ts",
     "asr-transcribe/index.ts",
     "main/index.ts",
     "parse-expense/index.ts",
 ]
-EXPECTED_FUNCTIONS = ["agent-query", "asr-transcribe", "parse-expense"]
+EXPECTED_FUNCTIONS = ["asr-transcribe", "parse-expense"]
 SOURCE_PATHS = [
     ".github/workflows/ci.yml",
     ".github/workflows/release.yml",

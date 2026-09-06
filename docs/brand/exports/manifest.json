@@ -1,0 +1,18 @@
+{
+  "concept": "同享",
+  "source": "apps/app/src/assets/brand-symbol.svg",
+  "color": "#1769df",
+  "viewBox": "0 0 24 24",
+  "construction": "Two balanced circle arcs surround equal strokes; rounded 2.3-unit stroke.",
+  "safeArea": "Symbol fits inside radius 0.30 of icon width, within the 0.40 maskable safe zone.",
+  "exports": [
+    "tongxiang-symbol.svg",
+    "tongxiang-symbol-white.svg",
+    "tongxiang-app-icon.svg",
+    "tongxiang-maskable.svg",
+    "tongxiang-app-icon.png",
+    "tongxiang-symbol.png",
+    "tongxiang-lockup.png"
+  ],
+  "regenerate": "node scripts/gen-icon.mjs"
+}

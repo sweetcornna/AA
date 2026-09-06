@@ -205,7 +205,6 @@ def write_artifact_fixture(runtime: Path, fingerprint: dict, upstream_commit: st
     template = runtime / "templates" / fingerprint["bundleSha256"] / "confirmation.html"
     entries = []
     for relative in (
-        "agent-query/index.ts",
         "asr-transcribe/index.ts",
         "main/index.ts",
         "parse-expense/index.ts",
@@ -355,7 +354,6 @@ def main() -> None:
         'member.from("expenses")',
         'member.rpc("create_settlement"',
         'owner.functions.invoke("parse-expense"',
-        'member.functions.invoke("agent-query"',
         'owner.functions.invoke("asr-transcribe"',
         "finally {",
         'owner.rpc("cleanup_canary_circle"',
@@ -1236,7 +1234,7 @@ def main() -> None:
         "DESTINATION=azure-blob", "--destination local|azure-blob", "validate-env.py",
         '--destination "$DESTINATION"', "--project-name \"$AA_STACK_ID\"", "pg_restore --list",
         "pg_dump -U postgres -d postgres --format=custom",
-        "tee \"$toc_fifo\"", "age --recipient", "--from-to BlobLocal", "Azure Blob read-back hash mismatch", "-maxdepth 1",
+        "tee --output-error=warn-nopipe \"$toc_fifo\"", "age --recipient", "--from-to BlobLocal", "Azure Blob read-back hash mismatch", "-maxdepth 1",
         'lock_file="$BACKUP_DIR/.${AA_STACK_ID}.backup.lock"', "flock 9",
         'ln -- "$partial" "$encrypted"', 'ln -- "$checksum_partial" "$checksum"',
         'if [[ "$DESTINATION" == "azure-blob" ]]; then\n  required_commands+=(azcopy)',
@@ -1246,7 +1244,7 @@ def main() -> None:
     azure_upload_index = backup_script.index('if [[ "$DESTINATION" == "azure-blob" ]]; then\n  readback=')
     for unconditional in (
         'lock_file="$BACKUP_DIR/.${AA_STACK_ID}.backup.lock"', "flock 9", 'stamp="$(date -u',
-        "pg_restore --list", "pg_dump -U postgres -d postgres --format=custom", 'tee "$toc_fifo"',
+        "pg_restore --list", "pg_dump -U postgres -d postgres --format=custom", 'tee --output-error=warn-nopipe "$toc_fifo"',
         'age --recipient "$BACKUP_AGE_RECIPIENT" --output "$partial"', 'wait "$toc_pid"',
         'test -s "$partial"', 'sha256sum -- "$partial"', 'printf \'%s  %s\\n\'',
         'ln -- "$partial" "$encrypted"', 'ln -- "$checksum_partial" "$checksum"',

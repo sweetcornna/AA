@@ -1,6 +1,13 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Button, Card, GroupLabel, Hairline, Input, NavBar } from "../../components/ui";
+import {
+  Button,
+  Card,
+  GroupLabel,
+  Hairline,
+  Input,
+  NavBar,
+} from "../../components/ui";
 import { authErrorMessage, safeReturnPath } from "../../lib/authNavigation";
 import { supabase } from "../../lib/supabase";
 
@@ -9,7 +16,9 @@ const EMAIL_RE = /^\S+@\S+\.\S+$/;
 export function RegisterPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const returnTo = safeReturnPath((location.state as { returnTo?: unknown } | null)?.returnTo);
+  const returnTo = safeReturnPath(
+    (location.state as { returnTo?: unknown } | null)?.returnTo,
+  );
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -48,21 +57,41 @@ export function RegisterPage() {
     }
   }
 
-  const hint = (text: string) => <span className="flex-none whitespace-nowrap text-[15px]" style={{ color: "var(--tertiary)" }}>{text}</span>;
+  const hint = (text: string) => (
+    <span
+      className="flex-none whitespace-nowrap text-[15px]"
+      style={{ color: "var(--tertiary)" }}
+    >
+      {text}
+    </span>
+  );
 
   return (
-    <div className="mx-auto min-h-screen max-w-md">
+    <div className="page-form">
       <NavBar title="创建账号" onBack={() => navigate(-1)} backLabel="登录" />
       <div className="px-4 pb-16 pt-2">
         <GroupLabel>个人信息</GroupLabel>
         <Card>
           <div className="flex h-12 items-center gap-3 px-4">
-            <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="昵称" autoFocus />
+            <Input
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder="昵称"
+              maxLength={100}
+              autoFocus
+            />
             {hint("必填")}
           </div>
           <Hairline />
           <div className="flex h-12 items-center gap-3 px-4">
-            <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="邮箱" inputMode="email" autoCapitalize="none" />
+            <Input
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="邮箱"
+              autoComplete="email"
+              inputMode="email"
+              autoCapitalize="none"
+            />
             {hint("必填")}
           </div>
         </Card>
@@ -71,19 +100,44 @@ export function RegisterPage() {
         <GroupLabel>设置密码</GroupLabel>
         <Card>
           <div className="flex h-12 items-center px-4">
-            <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 6 位" />
+            <Input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="至少 6 位"
+              autoComplete="new-password"
+            />
           </div>
           <Hairline />
           <div className="flex h-12 items-center px-4">
-            <Input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} placeholder="再次输入密码" />
+            <Input
+              type="password"
+              value={confirm}
+              onChange={(event) => setConfirm(event.target.value)}
+              placeholder="再次输入密码"
+              autoComplete="new-password"
+            />
           </div>
         </Card>
 
-        <p className="mt-3 px-1 text-[12px] leading-relaxed" style={{ color: "var(--label2)" }}>
+        <p
+          className="mt-3 px-1 text-[12px] leading-relaxed"
+          style={{ color: "var(--label2)" }}
+        >
           注册后会立即登录；本版本不会额外验证邮箱所有权，请使用你可长期访问的邮箱。
         </p>
-        <Button className="mt-5" disabled={busy} onClick={submit}>{busy ? "注册中…" : "注册并登录"}</Button>
-        {error && <p className="mt-3 text-center text-[13px]" style={{ color: "var(--red)" }}>{error}</p>}
+        <Button className="mt-5" disabled={busy} onClick={submit}>
+          {busy ? "注册中…" : "注册并登录"}
+        </Button>
+        {error && (
+          <p
+            role="alert"
+            className="mt-3 text-center text-[13px]"
+            style={{ color: "var(--red)" }}
+          >
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );

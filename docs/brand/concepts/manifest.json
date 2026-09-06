@@ -1,0 +1,38 @@
+[
+  {
+    "index": 1,
+    "title": "同享",
+    "src": "01-equal-circle.png",
+    "href": "01-equal-circle.png",
+    "prompt": "A distinctive circle emblem made of two balanced curved open brackets and two short horizontal equal-sign strokes nested within the circle. The elements feel like two people gathering around a shared table, equitable contributions. The circle has intentional left/right opening negative space, generous uniform weight, no currency symbols. Elegant, compact, unified, one-color mark. Do not make a bank emblem or abstract random swish.",
+    "route": "native-imagegen",
+    "source": "/Users/cornna/.codex/generated_images/01a0745d-efd5-75e0-a980-e1c2e9fc1a8c/exec-0552f05f-273f-4d4b-bde4-0462d2d44809.png"
+  },
+  {
+    "index": 2,
+    "title": "相伴",
+    "src": "02-shared-loop.png",
+    "href": "02-shared-loop.png",
+    "prompt": "A compact interlocking loop emblem: two identical soft rounded links intersect diagonally at 45 degrees to form a single balanced square knot, clear central shared negative space. The two contributors have equal visual weight. It suggests shared responsibility and connection. Avoid infinity sign and existing payment company logos; clear topology, one color.",
+    "route": "native-imagegen",
+    "source": "/Users/cornna/.codex/generated_images/01a0745d-f03d-7940-b7a8-12c7d494d215/exec-e9e2c959-58ab-4524-9088-a1e6441f7068.png"
+  },
+  {
+    "index": 3,
+    "title": "合账",
+    "src": "03-folded-ledger.png",
+    "href": "03-folded-ledger.png",
+    "prompt": "A compact open folded receipt or ledger symbol composed of two equal rounded vertical panels facing each other, subtly joined at the bottom. Central negative space forms a precise checkmark suggesting bills settled. Bold clean silhouette rather than illustrative detail, welcoming upright proportions; no letters, no numeric marks.",
+    "route": "native-imagegen",
+    "source": "/Users/cornna/.codex/generated_images/01a0745d-f0aa-7f53-b6ca-bd37fb34ea5d/exec-bcece028-c176-4625-b782-ceb44d489672.png"
+  },
+  {
+    "index": 4,
+    "title": "围坐",
+    "src": "04-shared-table.png",
+    "href": "04-shared-table.png",
+    "prompt": "A friendly precise abstract four-person circle around a shared central table: four identical quarter-ring segments symmetrically arranged with clean diagonal gaps, all four parts equal in area. Negative space central small rounded square. Ring segments softly rounded; must feel like community and equal sharing, no arrowheads, no generic piechart or fourpetal flower.",
+    "route": "native-imagegen",
+    "source": "/Users/cornna/.codex/generated_images/01a0745d-f11c-7d22-a425-c603dd2ac3ab/exec-3f16d095-346d-4391-8afc-c14b27d8bc88.png"
+  }
+]

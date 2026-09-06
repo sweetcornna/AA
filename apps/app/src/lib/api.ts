@@ -17,7 +17,10 @@ import type {
   Settlement,
 } from "./types";
 
-function unwrap<T>(res: { data: T | null; error: { message: string } | null }): T {
+function unwrap<T>(res: {
+  data: T | null;
+  error: { message: string } | null;
+}): T {
   if (res.error) throw new Error(res.error.message);
   return res.data as T;
 }
@@ -41,7 +44,10 @@ export async function updateMyProfile(input: {
 }): Promise<void> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("not authenticated");
-  const res = await supabase.from("profiles").update(input).eq("id", auth.user.id);
+  const res = await supabase
+    .from("profiles")
+    .update(input)
+    .eq("id", auth.user.id);
   if (res.error) throw new Error(res.error.message);
 }
 
@@ -77,16 +83,56 @@ export async function createCircle(input: {
   return unwrap<Circle>(res);
 }
 
+export interface CircleParticipant {
+  user_id: string;
+  display_name: string;
+  avatar_url: string | null;
+  active: boolean;
+}
+
+export async function listCircleParticipants(
+  circleId: string,
+): Promise<CircleParticipant[]> {
+  return (
+    unwrap<CircleParticipant[]>(
+      await supabase.rpc("list_circle_participants", { p_circle_id: circleId }),
+    ) ?? []
+  );
+}
+
+export async function leaveCircle(
+  circleId: string,
+  successorUserId?: string,
+): Promise<void> {
+  const { error } = await supabase.rpc("leave_circle", {
+    p_circle_id: circleId,
+    p_successor_user_id: successorUserId || null,
+  });
+  if (error) {
+    const messages: Record<string, string> = {
+      balance_not_zero: "你还有未结清的款项，请结清后再退出。",
+      successor_required: "请选择一位新圈主。",
+      invalid_successor: "接任人已不在圈子中，请重新选择。",
+    };
+    throw new Error(messages[error.message] ?? "退出失败，请检查网络后重试。");
+  }
+}
+
 // ---- members ----
 export async function listMembers(circleId: string): Promise<CircleMember[]> {
   const res = await supabase
     .from("circle_members")
-    .select("id, circle_id, user_id, role, joined_at, profile:profiles(id, display_name, avatar_url)")
+    .select(
+      "id, circle_id, user_id, role, joined_at, profile:profiles(id, display_name, avatar_url)",
+    )
     .eq("circle_id", circleId)
     .order("joined_at", { ascending: true });
-  const rows = unwrap<
-    (Omit<CircleMember, "profile"> & { profile: Profile | Profile[] | null })[]
-  >(res);
+  const rows =
+    unwrap<
+      (Omit<CircleMember, "profile"> & {
+        profile: Profile | Profile[] | null;
+      })[]
+    >(res);
   return (rows ?? []).map((r) => ({
     ...r,
     profile: Array.isArray(r.profile) ? (r.profile[0] ?? null) : r.profile,
@@ -124,7 +170,10 @@ export interface ExpenseAiMeta {
 
 export async function createExpense(
   draft: ExpenseDraft,
-  opts?: { source?: "manual" | "voice" | "agent"; rawText?: string | null } & ExpenseAiMeta,
+  opts?: {
+    source?: "manual" | "voice" | "agent";
+    rawText?: string | null;
+  } & ExpenseAiMeta,
 ): Promise<{ id: string }> {
   const allocation = computeSplit({
     total: draft.amountMinor,
@@ -169,40 +218,6 @@ export async function transcribeAudio(
   return transcribeAudioWithClient(supabase, blob, signal);
 }
 
-/**
- * A settlement the agent proposes but does NOT execute. The user confirms in
- * the UI and the client calls the debtor-authorized settlement RPC.
- */
-export interface AgentSettleAction {
-  type: "settle_up";
-  circleId: string;
-  circleName: string;
-  fromUser: string;
-  fromName: string;
-  toUser: string;
-  toName: string;
-  amountMinor: number;
-  currency: string;
-}
-
-export interface AgentReply {
-  answer: string;
-  action: AgentSettleAction | null;
-}
-
-/** Ask the AI assistant a question about your ledger (agent-query Edge Function). */
-export async function askAgent(question: string): Promise<AgentReply> {
-  const { data, error } = await supabase.functions.invoke("agent-query", {
-    body: { question },
-  });
-  if (error) throw new Error(error.message ?? "助手暂时不可用");
-  if (data?.error) throw new Error(data.error);
-  return {
-    answer: (data?.answer as string) ?? "我没太理解，换个说法再问问？",
-    action: (data?.action as AgentSettleAction | null) ?? null,
-  };
-}
-
 /** Natural language → ParsedExpense via the parse-expense Edge Function. */
 export async function parseExpense(
   circleId: string,
@@ -226,7 +241,9 @@ export async function getBalances(circleId: string): Promise<CircleBalance[]> {
 }
 
 /** My net balance in every circle I belong to (one row per circle). */
-export async function getMyBalances(): Promise<{ circle_id: string; net_minor: number }[]> {
+export async function getMyBalances(): Promise<
+  { circle_id: string; net_minor: number }[]
+> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return [];
   const res = await supabase
@@ -263,9 +280,7 @@ interface FallbackSettlementEvent {
   to_user: string;
 }
 
-type FallbackActivityEvent =
-  | FallbackExpenseEvent
-  | FallbackSettlementEvent;
+type FallbackActivityEvent = FallbackExpenseEvent | FallbackSettlementEvent;
 
 const FALLBACK_EXPENSE_COLUMNS =
   "id, circle_id, payer_id, amount_minor, currency, description, category, created_by, created_at";
@@ -328,9 +343,11 @@ async function listFallbackSplitExpenses(
     .order("expense(id)", { ascending: true })
     .limit(limit);
   if (res.error) throw new Error(res.error.message);
-  return ((res.data ?? []) as unknown as {
-    expense: Record<string, unknown> | Record<string, unknown>[];
-  }[]).map((row) =>
+  return (
+    (res.data ?? []) as unknown as {
+      expense: Record<string, unknown> | Record<string, unknown>[];
+    }[]
+  ).map((row) =>
     fallbackExpense(Array.isArray(row.expense) ? row.expense[0] : row.expense),
   );
 }
@@ -384,8 +401,11 @@ async function listActivityFallback(
     ),
   ];
   const unique = new Map<string, FallbackActivityEvent>();
-  for (const event of candidates) unique.set(`${event.kind}:${event.id}`, event);
-  const events = [...unique.values()].sort(fallbackActivityOrder).slice(0, limit);
+  for (const event of candidates)
+    unique.set(`${event.kind}:${event.id}`, event);
+  const events = [...unique.values()]
+    .sort(fallbackActivityOrder)
+    .slice(0, limit);
   if (events.length === 0) return [];
 
   const circleIds = [...new Set(events.map((event) => event.circle_id))];
@@ -503,7 +523,9 @@ export async function listActivity(
 export async function listSettlements(circleId: string): Promise<Settlement[]> {
   const res = await supabase
     .from("settlements")
-    .select("id, circle_id, from_user, to_user, amount_minor, currency, note, settled_at")
+    .select(
+      "id, circle_id, from_user, to_user, amount_minor, currency, note, settled_at",
+    )
     .eq("circle_id", circleId)
     .order("settled_at", { ascending: false });
   return unwrap<Settlement[]>(res) ?? [];

@@ -18,7 +18,7 @@ const EXPECTED_ORIGINS = {
   staging: "https://aa-staging-api.cornna.xyz",
   production: "https://aa-api.cornna.xyz",
 };
-const EXPECTED_FUNCTIONS = ["agent-query", "asr-transcribe", "parse-expense"];
+const EXPECTED_FUNCTIONS = ["asr-transcribe", "parse-expense"];
 const SOURCE_PATHS = [
   ".github/workflows/ci.yml",
   ".github/workflows/release.yml",

@@ -2,6 +2,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { supabase, supabaseConfigurationError } from "../../lib/supabase";
+import { queryClient } from "../../lib/queryClient";
 
 interface AuthState {
   session: Session | null;
@@ -29,23 +30,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     let active = true;
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (!active) return;
+    let currentUserId: string | null | undefined;
+    const acceptSession = (nextSession: Session | null) => {
+      const nextId = nextSession?.user.id ?? null;
+      if (currentUserId !== nextId) {
+        void queryClient.cancelQueries();
+        queryClient.clear();
+        currentUserId = nextId;
+      }
       setSession(nextSession);
-      setError(null);
-      setLoading(false);
-    });
+    };
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      (_event, nextSession) => {
+        if (!active) return;
+        acceptSession(nextSession);
+        setError(null);
+        setLoading(false);
+      },
+    );
 
-    void supabase.auth.getSession().then(({ data, error: sessionError }) => {
-      if (!active) return;
-      setSession(data.session);
-      setError(sessionError?.message ?? null);
-      setLoading(false);
-    }).catch((cause: unknown) => {
-      if (!active) return;
-      setError(cause instanceof Error ? cause.message : "无法读取登录状态");
-      setLoading(false);
-    });
+    void supabase.auth
+      .getSession()
+      .then(({ data, error: sessionError }) => {
+        if (!active) return;
+        acceptSession(data.session);
+        setError(sessionError?.message ?? null);
+        setLoading(false);
+      })
+      .catch((cause: unknown) => {
+        if (!active) return;
+        setError(cause instanceof Error ? cause.message : "无法读取登录状态");
+        setLoading(false);
+      });
 
     return () => {
       active = false;
@@ -54,7 +70,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ session, user: session?.user ?? null, loading, error }}>
+    <AuthContext.Provider
+      value={{ session, user: session?.user ?? null, loading, error }}
+    >
       {children}
     </AuthContext.Provider>
   );

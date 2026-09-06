@@ -375,9 +375,6 @@ authorization_url_path = "/oauth/consent"
 # Allow dynamic client registration
 allow_dynamic_registration = false
 
-[functions.agent-query]
-verify_jwt = true
-
 [functions.asr-transcribe]
 verify_jwt = true
 

@@ -32,9 +32,6 @@ with sync_playwright() as p:
     pg.wait_for_selector("h1:text-is('动态')", timeout=15000)
     shot(pg, "/tmp/i-activity.png")
 
-    pg.goto(APP + "/#/assistant", wait_until="networkidle")
-    pg.wait_for_selector("h1:text-is('助手')", timeout=15000)
-    shot(pg, "/tmp/i-assistant.png")
 
     pg.goto(APP + "/#/profile", wait_until="networkidle")
     pg.wait_for_selector("text=个人资料", timeout=15000)

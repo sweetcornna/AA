@@ -435,6 +435,8 @@ begin
     'public.accept_invitation(text)',
     'public.create_expense(uuid,uuid,bigint,character,text,text,date,text,jsonb,text,text,text,text,numeric,jsonb)',
     'public.create_settlement(uuid,uuid,uuid,bigint,character,text)',
+    'public.leave_circle(uuid,uuid)',
+    'public.list_circle_participants(uuid)',
     'public.consume_asr_quota()',
     'public.create_canary_circle(uuid,text)',
     'public.cleanup_canary_circle(uuid,text)'
