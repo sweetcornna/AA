@@ -368,7 +368,17 @@ test("email OTP login uses the delivered code", async ({
   await expect(page.getByRole("heading", { name: "我的圈子" })).toBeVisible();
 });
 
-test("voice consent, real MediaRecorder capture with synthetic audio, transcription and cancellation", async ({
+async function supportsCloudCapture(page: Page) {
+  return page.evaluate(() =>
+    Boolean(navigator.mediaDevices?.getUserMedia) &&
+    typeof MediaRecorder !== "undefined" &&
+    ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].some((mime) =>
+      MediaRecorder.isTypeSupported(mime),
+    ),
+  );
+}
+
+test("voice consent, supported MediaRecorder capture or manual fallback, transcription and cancellation", async ({
   page,
   context,
   browserName,
@@ -418,6 +428,7 @@ test("voice consent, real MediaRecorder capture with synthetic audio, transcript
   );
   await login(page, ledger.owner);
   await page.goto(`/#/circles/${id}/add`);
+  const captureSupported = await supportsCloudCapture(page);
   await page.getByRole("button", { name: "语音", exact: true }).click();
   await expect(
     page.getByRole("dialog", { name: "使用云端语音转写" }),
@@ -431,6 +442,22 @@ test("voice consent, real MediaRecorder capture with synthetic audio, transcript
   ).toBeVisible();
   await page.getByRole("button", { name: "语音", exact: true }).click();
   await page.getByRole("button", { name: "同意并录音", exact: true }).click();
+  // Playwright's Linux WebKit has no MediaRecorder; macOS WebKit does.
+  // Verify the real fallback on that runtime instead of faking an encoder.
+  if (!captureSupported) {
+    test.info().annotations.push({
+      type: "coverage",
+      description: "This browser runtime lacks a supported MediaRecorder; manual recovery verified, capture not claimed.",
+    });
+    await expect(page.getByText(/不支持.*录音/)).toBeVisible();
+    await page.getByLabel("金额", { exact: true }).fill("80");
+    await page.getByLabel("备注，如 火锅、打车").fill("录音不可用时手动记账");
+    await page.getByRole("button", { name: "保存账单", exact: true }).click();
+    await expect(page.getByText("录音不可用时手动记账", { exact: true })).toBeVisible();
+    const stored = unwrap(await admin.from("expenses").select("source,asr_provider").eq("circle_id", id));
+    expect(stored).toEqual([{ source: "manual", asr_provider: null }]);
+    return;
+  }
   await expect(page.getByRole("button", { name: /录音 1s/ })).toBeVisible();
   const request = page.waitForRequest("**/functions/v1/asr-transcribe");
   await page.getByRole("button", { name: /点按结束/ }).click();
@@ -465,7 +492,7 @@ test("voice consent, real MediaRecorder capture with synthetic audio, transcript
   ]);
 });
 
-test("microphone denial and unavailable balances recover without false zero", async ({
+test("microphone denial or unsupported capture and unavailable balances recover without false zero", async ({
   page,
   ledger,
 }) => {
@@ -486,8 +513,9 @@ test("microphone denial and unavailable balances recover without false zero", as
   });
   await login(page, ledger.owner);
   await page.goto(`/#/circles/${id}/add`);
+  const captureSupported = await supportsCloudCapture(page);
   await page.getByRole("button", { name: "语音", exact: true }).click();
-  await expect(page.getByText(/麦克风.*(拒绝|权限)/)).toBeVisible();
+  await expect(page.getByText(captureSupported ? /麦克风.*(拒绝|权限)/ : /不支持.*录音/)).toBeVisible();
   await page.getByLabel("金额", { exact: true }).fill("10");
   await expect(page.getByRole("button", { name: "保存账单" })).toBeEnabled();
   await page.route("**/rest/v1/circle_balances?**", (route) =>

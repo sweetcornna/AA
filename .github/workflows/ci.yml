@@ -103,6 +103,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium firefox webkit
+      - name: Provide an audio output for real browser recording tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=ci_audio
+          pactl set-default-sink ci_audio
       - name: Start isolated local backend
         run: |
           npx --yes supabase@2.107.0 start -x studio,imgproxy,logflare,vector,supavisor
