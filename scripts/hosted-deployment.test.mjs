@@ -12,16 +12,16 @@ const temporaryDirectories = [];
 const staging = {
   deploymentType: "self-hosted",
   stackId: "aa-staging-primary",
-  serverId: "socks-p2-149-118-61-165",
+  serverId: "socks-p1-172-245-54-136",
   apiOrigin: "https://aa-staging-api.cornna.xyz",
-  region: "ap-singapore-2",
+  region: "racknerd-us",
 };
 const production = {
   deploymentType: "self-hosted",
   stackId: "aa-production-primary",
-  serverId: "socks-p2-149-118-61-165",
+  serverId: "socks-p1-172-245-54-136",
   apiOrigin: "https://aa-api.cornna.xyz",
-  region: "ap-singapore-2",
+  region: "racknerd-us",
 };
 
 afterEach(() => {

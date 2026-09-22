@@ -130,9 +130,15 @@ def check_capacity_profiles() -> None:
             cpus: int,
             memory_kib: int,
             *arguments: str,
+            disk_kib: int = 52428800,
             extra_environment: dict[str, str] | None = None,
         ) -> subprocess.CompletedProcess[str]:
             os_release.write_text(f'ID={identifier}\nVERSION_ID="{version}"\n')
+            (binaries / "df").write_text(
+                "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n"
+                f"fixture 34990944 1 {disk_kib} 1%% /\\n'\n"
+            )
+            (binaries / "df").chmod(0o755)
             (binaries / "getconf").write_text(f"#!/bin/sh\nprintf '{cpus}\\n'\n")
             (binaries / "getconf").chmod(0o755)
             meminfo.write_text(
@@ -169,16 +175,41 @@ def check_capacity_profiles() -> None:
             "unapproved operating-system families must fail the supported OS gate",
         )
 
-        # The migration target is an Ubuntu 24.04 ARM VM. Its actual memory is
-        # far above the profile floor; this fixture proves the exact target OS
-        # family is accepted without weakening any resource threshold.
-        target_vm = run("ubuntu", "24.04", 2, 12213564, "--profile", "single-stack")
-        check(target_vm.returncode == 0, f"P2 single-stack VM fixture must pass: {target_vm.stderr}")
+        # The migration target is the current P1: a Debian 13 x86_64 KVM with
+        # 2 vCPU and MemTotal 2,020,952 KiB. This fixture proves the exact
+        # target OS family and CPU/RAM shape are accepted without weakening any
+        # resource threshold; it says nothing about the host's real free space.
+        target_vm = run("debian", "13", 2, 2020952, "--profile", "single-stack")
+        check(target_vm.returncode == 0, f"P1 single-stack VM fixture must pass: {target_vm.stderr}")
         check(target_vm.stdout.count("Disk gate passed") == 2, "single-stack fixture must check both filesystems")
-        print("Single-stack P2-VM fixture output:")
+        print("Single-stack P1-VM fixture output:")
         print(target_vm.stdout.strip())
 
-        below_floor = run("ubuntu", "24.04", 2, 917503, "--profile", "single-stack")
+        # A host below the derived 12 GiB floor must still fail closed on every
+        # supplied path. 11,927,120 KiB was P1's real free space before cleanup.
+        undersized_disk = run(
+            "debian", "13", 2, 2020952, "--profile", "single-stack", disk_kib=11927120
+        )
+        check(
+            undersized_disk.returncode != 0
+            and undersized_disk.stderr.count("11927120 KiB < 12582912 KiB free") == 2,
+            "free space below the single-stack disk floor must fail closed on every supplied path",
+        )
+        print("Single-stack undersized-disk fixture output:")
+        print(undersized_disk.stderr.strip())
+
+        # The floor must still be clearable AFTER the 3.69 GiB pinned image set
+        # lands, because compose.sh re-runs this gate on every invocation. This
+        # fixture is P1's post-cleanup free space minus that image set.
+        after_images = run(
+            "debian", "13", 2, 2020952, "--profile", "single-stack", disk_kib=17600000
+        )
+        check(
+            after_images.returncode == 0,
+            f"the floor must remain clearable once images have landed: {after_images.stderr}",
+        )
+
+        below_floor = run("debian", "13", 2, 917503, "--profile", "single-stack")
         check(
             below_floor.returncode != 0 and "RAM gate failed: 917503 KiB < 917504 KiB" in below_floor.stderr,
             "single-stack RAM floor must fail closed",
@@ -187,9 +218,9 @@ def check_capacity_profiles() -> None:
         print(below_floor.stderr.strip())
 
         # Use a supported OS so this exercises the override guard itself rather
-        # than tripping the Debian gate first.
+        # than tripping the OS gate first.
         lowered = run(
-            "ubuntu", "24.04", 2, 12213564, "--profile", "single-stack",
+            "debian", "13", 2, 2020952, "--profile", "single-stack",
             extra_environment={"AA_MIN_MEMORY_KIB": "1"},
         )
         check(
@@ -1077,14 +1108,17 @@ def main() -> None:
         check(unchanged in capacity, f"dual-stack threshold changed: {unchanged}")
     for single_floor in (
         "SINGLE_STACK_MIN_CPUS=2", "SINGLE_STACK_MIN_MEMORY_KIB=917504",
-        "SINGLE_STACK_MIN_DISK_KIB=20971520",
+        "SINGLE_STACK_MIN_DISK_KIB=12582912",
     ):
         check(single_floor in capacity, f"single-stack floor missing: {single_floor}")
     for rationale in (
         "observed/planning footprint for one seven-service stack", "about 650-700",
         "db 256 + templates 16 + auth 64 + rest 32", "functions 144 + kong 80 = 688 MiB",
         "130 MiB for the existing", "78 MiB for Linux kernel/daemons",
-        "swap is", "20 GiB holds one pinned image set",
+        "swap is", "pinned image set measures 3.96 GB",
+        "about 10.7 GiB, rounded up to 12 GiB",
+        "Operator-approved deviation 2026-09-22",
+        "dual-stack keeps its",
     ):
         check(rationale in capacity, f"single-stack capacity rationale missing: {rationale}")
     check("PROFILE=dual-stack" in capacity, "dual-stack must remain the default capacity profile")
@@ -1129,9 +1163,9 @@ def main() -> None:
 
     runbook = (ROOT / "docs/HOSTED_DEPLOYMENT.md").read_text()
     for required in (
-        "deliberate deviation", "--profile single-stack", "917,504 KiB", "20,971,520 KiB",
+        "deliberate deviation", "--profile single-stack", "917,504 KiB", "12,582,912 KiB",
         "没有 staging validation", "所有变更直接进入 production", "PostgreSQL 在压力下可能触及 swap",
-        "host OOM 或单容器 OOM 风险", "Xray、Relay、WARP、Nginx、finance、marketplace",
+        "host OOM 或单容器 OOM 是现实风险", "Xray、Nginx、fail2ban、hermes 与 hermes-dashboard、cliproxy",
         "isolation proof **没有执行**", "drill 前 production 必须停止",
         "Single-stack recovery expectations", "RPO 24h、RTO 4h",
         "--destination local", "`azure-blob` 是默认值",

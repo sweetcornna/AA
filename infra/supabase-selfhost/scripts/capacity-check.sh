@@ -11,11 +11,25 @@ APPROVED_MIN_UBUNTU_VERSION=24
 # MiB. Its explicit caps are db 256 + templates 16 + auth 64 + rest 32 +
 # realtime 96 + functions 144 + kong 80 = 688 MiB. Add 130 MiB for the existing
 # host services and 78 MiB for Linux kernel/daemons to reach 896 MiB; swap is
-# deliberately excluded. Two CPUs schedule the database plus application tier,
-# and 20 GiB holds one pinned image set, database volume, and backup workspace.
+# deliberately excluded. Two CPUs schedule the database plus application tier.
+#
+# The disk floor is derived from the stack's measured footprint, not from any
+# target host's free space. The pinned image set measures 3.96 GB on a running
+# host (postgres 1.69G, edge-runtime 1.12G, realtime 528M, kong 496M, gotrue
+# 81.8M, postgrest 27.4M, nginx-unprivileged 20.5M), about 3.69 GiB. Add 4 GiB
+# of database volume growth headroom, 2 GiB for container writable layers and
+# logs, and 1 GiB of backup workspace for the pg_dump/age pipeline and its
+# 30-day local retention: about 10.7 GiB, rounded up to 12 GiB.
+#
+# Operator-approved deviation 2026-09-22: 12 GiB replaces an earlier 20 GiB
+# figure that was an estimate rather than a measurement. Because compose.sh
+# gates on every invocation, a 20 GiB floor also had to be cleared AFTER the
+# 3.69 GiB image set had landed, which no host in the current fleet could do
+# and which blocked the stack from being managed at all. dual-stack keeps its
+# own 40 GiB threshold unchanged.
 SINGLE_STACK_MIN_CPUS=2
 SINGLE_STACK_MIN_MEMORY_KIB=917504
-SINGLE_STACK_MIN_DISK_KIB=20971520
+SINGLE_STACK_MIN_DISK_KIB=12582912
 # The OS floor is NOT a capacity trade-off and is identical in both profiles.
 # Debian 12+ and Ubuntu 24.04+ are the explicitly approved, supported host
 # families. A stack holding user financial records must not run on an

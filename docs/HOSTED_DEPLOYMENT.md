@@ -10,7 +10,11 @@ AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不�
 | staging | `aa-staging-primary` | `https://aa-staging-api.cornna.xyz` | `127.0.0.1:18100` | `/srv/aa/staging` |
 | production | `aa-production-primary` | `https://aa-api.cornna.xyz` | `127.0.0.1:18101` | `/srv/aa/production` |
 
-当前 production 目标是 `socks` 项目的现 P2（Oracle Cloud `ap-singapore-2`，ARM64，2 vCPU、约 12 GiB RAM、4 GiB swap、Ubuntu 24.04）。2026-09-03 从旧 Azure `40.115.207.13` 迁移时继续采用 operator 明确批准的 `single-stack` deliberate deviation；这不改变也不降低默认 `dual-stack` 合同。
+当前 production 目标是 `socks` 项目的现 P1（RackNerd/ColoCrossing KVM `172.245.54.136`，region 标识 `racknerd-us`，x86_64，2 vCPU、`MemTotal` 约 1,973 MiB、4 GiB swapfile + 1 GiB swap 分区、Debian 13 trixie）。迁移沿革：2026-09-03 从旧 Azure `40.115.207.13` 迁到当时的 Oracle P2 `149.118.61.165`；2026-09-19 `socks` 的整个 Oracle 机队（含该 P2）被终止，该目标机已不存在，`aa-api.cornna.xyz` 的 A record 自此成为悬空记录。2026-09-21 改指现 P1，继续采用 operator 明确批准的 `single-stack` deliberate deviation；这不改变也不降低默认 `dual-stack` 合同。
+
+P1 上的 single-stack 容量门（2026-09-22 实测）：OS（Debian 13）、CPU（2）、`MemTotal`（2,020,952 KiB）与磁盘（回收 9.10 GiB 后 21,473,648 KiB free，`/srv/aa` 与 Docker `DockerRootDir` 同在 `/dev/vda1`）全部通过。
+
+single-stack 磁盘门于 2026-09-22 经 operator 明确批准，从 20 GiB 下调到按实测推导的 `12,582,912 KiB`（12 GiB）：镜像集在运行主机上实测 3.96 GB（≈3.69 GiB）、数据库卷增长余量 4 GiB、容器可写层与日志 2 GiB、`pg_dump`/age 备份工作区与 30 天本地保留 1 GiB，合计约 10.7 GiB。原 20 GiB 是估算而非实测，且由于 `compose.sh` 每次调用都重跑该门，它必须在 3.69 GiB 镜像落盘**之后**仍然满足 —— 现有机队没有任何一台做得到，结果是栈根本无法被管理。dual-stack 的 `41,943,040 KiB` 门不变。
 
 本文和仓库脚本不会授权服务器、DNS 或 GitHub mutation。每次外部变更仍需明确批准。
 
@@ -24,9 +28,9 @@ AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不�
 - [ ] 聊天中曾暴露的服务器密码和 Cloudflare token 已撤销并轮换；已验证两把独立 SSH key 与回滚通道，并关闭 sshd password authentication；DNS 只用最小 Zone DNS token；
 - [ ] staging/production 的 Resend、OpenAI、数据库/JWT、备份凭据完全分开；
 - [ ] 备份模式已显式批准：默认 `azure-blob` 时 Azure Blob 容器和 VM managed identity 权限已配置，主机已从可信来源安装并验证 `age` 与 `azcopy`，且不使用长期 SAS URL；临时采用 `local` 时已接受同盘丢失风险并继续把 off-host copy 作为未完成 gate；
-- [ ] 云侧 effective firewall（P2 为 OCI Security List/NSG）已确认只开放批准的业务端口；既有 SOCKS/Relay/WARP 端口按 P2 基线保留，AA 只复用 80/443 的 SNI 分流；host INPUT=ACCEPT 不能替代控制面证据；
+- [ ] 生效的 effective firewall 已确认只开放批准的业务端口；既有 SOCKS/Relay/WARP 端口按主机基线保留，AA 只复用 80/443 的 SNI 分流。P1 是 RackNerd/ColoCrossing KVM，**没有云侧 Security Group/NSG 控制面**，主机 nftables/iptables 加 fail2ban 就是唯一执行点，因此必须提供显式批准的 ruleset 证据；`INPUT=ACCEPT` 在这种拓扑下等于无边界，不得作为通过证据；
 - [ ] `aa-api.cornna.xyz`、`aa-staging-api.cornna.xyz` 的 DNS/TLS 变更已单独批准；
-- [ ] 已加密备份并恢复验证双 SSH key、Nginx/SNI、Xray unit/drop-in/config、WARP、Fail2ban、`/opt/light-panel/*` Docker bind data 与 certbot 账号/证书/续期配置，并记录回滚命令；
+- [ ] 已加密备份并恢复验证双 SSH key、Nginx/SNI、Xray unit/drop-in/config、WARP、Fail2ban、主机上现有的 Docker bind data（P1 为 `/opt/cliproxy`、`/opt/hermes`、`/opt/monitoring`、`/opt/newapi`、`/opt/sub2api*`、`/opt/sota-*` 等）与 certbot 账号/证书/续期配置，并记录回滚命令；
 - [ ] source commit clean，CI、基础设施测试和独立验证通过。
 
 明确批准的 `single-stack` 使用独立且仍然 fail-closed 的 stop gates：
@@ -34,15 +38,15 @@ AA 依赖 Supabase Auth、PostgREST/RLS/RPC、Realtime 和 Edge Functions，不�
 - [ ] 每条相关命令显式使用 `--profile single-stack`；漏写时回到默认 `dual-stack`，不会自动降级；
 - [ ] target manifest 为 `deploymentMode=single-stack`，只定义 production；env、migration 和 Nginx target 都必须是 production；
 - [ ] Debian `VERSION_ID >= 12` 或 Ubuntu `VERSION_ID >= 24.04`、在线 CPU `>= 2`、物理 `MemTotal >= 917,504 KiB`（896 MiB）；swap 和 `MemAvailable` 都不计入该硬门；
-- [ ] `/srv/aa` 与 Docker `DockerRootDir` 所在 filesystem 分别至少有 `20,971,520 KiB`（20 GiB）free；即使两者是同一 filesystem 也必须完成两次路径检查；
+- [ ] `/srv/aa` 与 Docker `DockerRootDir` 所在 filesystem 分别至少有 `12,582,912 KiB`（12 GiB）free，且该余量在 pinned 镜像集落盘后仍然成立；即使两者是同一 filesystem 也必须完成两次路径检查；
 - [ ] 上游 manifest、locked commit、function/template artifact 与 `AA_SOURCE_FINGERPRINT` 全部验证通过；
 - [ ] production env 仍满足所有 secret、JWT、URL、port、backup 与 provider 校验；
 - [ ] restore drill 仍使用随机 restore-only project/network/volumes，并且 drill 前 production 必须停止；
 - [ ] source clean，全部仓库验证、encrypted backup、restore drill、production non-destructive canary 和恢复步骤均通过/演练。
 
-896 MiB floor 的来源不是目标 VM 的现有数值：七个服务的明确上限合计 688 MiB（PostgreSQL 256、template 16、GoTrue 64、PostgREST 32、Realtime 96、Edge Runtime 144、Kong 80），再加既有主机服务约 130 MiB 和 Linux kernel/host daemon 78 MiB。P2 的实际余量更高，但仍必须保护其 Xray、Relay、WARP、Nginx、监控和其他容器。`AA_MIN_CPUS`、`AA_MIN_MEMORY_KIB`、`AA_MIN_DISK_KIB` 只能提高当前 profile 的门，不能降低。
+896 MiB floor 的来源不是目标 VM 的现有数值：七个服务的明确上限合计 688 MiB（PostgreSQL 256、template 16、GoTrue 64、PostgREST 32、Realtime 96、Edge Runtime 144、Kong 80），再加既有主机服务约 130 MiB 和 Linux kernel/host daemon 78 MiB。P1 的实测余量比该 floor 更紧而不是更宽：2026-09-21 `MemAvailable` 只有 909,924 KiB（约 888 MiB），`Committed_AS` 已达 2,615,792 KiB，swapfile 已用 398,112 KiB，因此 688 MiB 的服务上限几乎吃满全部可用内存，必须保护其 Xray、Nginx、Relay/WARP 出口与既有容器。`AA_MIN_CPUS`、`AA_MIN_MEMORY_KIB`、`AA_MIN_DISK_KIB` 只能提高当前 profile 的门，不能降低。
 
-operator 同时明确接受：没有 staging validation；所有变更直接进入 production；PostgreSQL 在压力下可能触及 swap；即使 P2 有约 12 GiB RAM，host OOM 或单容器 OOM 风险仍需监控；Xray、Relay、WARP、Nginx、finance、marketplace 与其他既有容器同 production 共享 CPU、RAM、swap 和磁盘。低于任一所选 profile gate 时只允许本地仓库验证，不得起远端容器、改 DNS、签证书或发布 APK。
+operator 同时明确接受：没有 staging validation；所有变更直接进入 production；PostgreSQL 在压力下可能触及 swap；P1 只有约 1.93 GiB RAM 且已在用 swap，host OOM 或单容器 OOM 是现实风险而不是理论风险；Xray、Nginx、fail2ban、hermes 与 hermes-dashboard、cliproxy 及其 WARP proxy、sub2api、subconverter、onebot-tunnel、resident agent 与其他既有容器同 production 共享 CPU、RAM、swap 和磁盘。低于任一所选 profile gate 时只允许本地仓库验证，不得起远端容器、改 DNS、签证书或发布 APK。
 
 ## 架构与暴露面
 
@@ -197,7 +201,7 @@ sudo infra/supabase-selfhost/scripts/capacity-check.sh \
   /srv/aa "$(sudo docker info --format '{{.DockerRootDir}}')"
 ```
 
-single-stack 的 exact floor 是 2 CPU、917,504 KiB physical RAM、两个路径各 20,971,520 KiB free、Debian 12+ 或 Ubuntu 24.04+；dual-stack 保持 4 CPU、8,388,608 KiB、两个路径各 41,943,040 KiB free，并使用相同 OS 支持门。swap 只能缓解峰值压力，永远不能替代 `MemTotal` 门。`compose.sh` 在读取 DockerRootDir 前先 gate `/srv/aa`，之后再对 `/srv/aa` 和 DockerRootDir 执行同一 profile 的完整 gate。
+single-stack 的 exact floor 是 2 CPU、917,504 KiB physical RAM、两个路径各 12,582,912 KiB free、Debian 12+ 或 Ubuntu 24.04+；dual-stack 保持 4 CPU、8,388,608 KiB、两个路径各 41,943,040 KiB free，并使用相同 OS 支持门。swap 只能缓解峰值压力，永远不能替代 `MemTotal` 门。`compose.sh` 在读取 DockerRootDir 前先 gate `/srv/aa`，之后再对 `/srv/aa` 和 DockerRootDir 执行同一 profile 的完整 gate。
 
 确认现有监听、容器和磁盘；不要把外部端口扫描直接解释为 VM listener：
 
@@ -273,7 +277,7 @@ python3 infra/supabase-selfhost/scripts/render-nginx.py \
 
 执行顺序：
 
-1. Cloudflare 的 DNS-only A record 指向 P2 `149.118.61.165`；token 只通过受保护 input；
+1. Cloudflare 的 DNS-only A record 从已终止的 `149.118.61.165` 改指现 P1 `172.245.54.136`；token 只通过受保护 input；
 2. 验证 authoritative DNS；
 3. 使用 DNS-01 或与现有 80/443 路由兼容的 webroot 签发 production 证书；dual-stack 才签发第二个 staging 证书；
 4. 备份 Nginx config 与 `/etc/sota-vless-hy/site-stream-map.conf`；
@@ -368,7 +372,7 @@ archive 会流式解密一次用于 `PGDMP`/TOC/owner-ACL metadata 检查，再�
 
 该偏差的恢复目标仍是 encrypted logical backup 的默认 RPO 24h、RTO 4h，不是 PITR。operator 必须预期 restore drill 和真实 database recovery 都会造成 production downtime：先 `stop` production，确认没有该 project 的 running container，启动唯一的 restore-only database，记录 evidence 后精确清理 restore project，再用同一 `--profile single-stack` wrapper 重启 production。
 
-重启顺序固定为：capacity/artifact gate → `compose.sh --profile single-stack ... up -d` → `health-check.sh` → ordinary-user production canary → 监控 PostgreSQL、container OOM、host OOM、swap in/out、磁盘和 backup age。若 PostgreSQL 持续使用 swap、出现 OOM kill、health 不稳定或现有 Xray/beszel/uptime-kuma 被挤压，停止新 mutation 和高成本 function 请求；不得继续降低 memory floor/limit。优先回到上一个 immutable function artifact；数据库损坏时冻结写入并从最近一次已验证 backup 走 restore-only incident procedure。
+重启顺序固定为：capacity/artifact gate → `compose.sh --profile single-stack ... up -d` → `health-check.sh` → ordinary-user production canary → 监控 PostgreSQL、container OOM、host OOM、swap in/out、磁盘和 backup age。若 PostgreSQL 持续使用 swap、出现 OOM kill、health 不稳定或现有 Xray/Nginx/hermes/cliproxy/sub2api 被挤压，停止新 mutation 和高成本 function 请求；不得继续降低 memory floor/limit。优先回到上一个 immutable function artifact；数据库损坏时冻结写入并从最近一次已验证 backup 走 restore-only incident procedure。
 
 ## Production promotion
 
