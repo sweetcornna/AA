@@ -7,10 +7,11 @@ APPROVED_MIN_DISK_KIB=41943040
 APPROVED_MIN_DEBIAN_VERSION=12
 APPROVED_MIN_UBUNTU_VERSION=24
 
-# The observed/planning footprint for one seven-service stack is about 650-700
-# MiB. Its explicit caps are db 256 + templates 16 + auth 64 + rest 32 +
-# realtime 96 + functions 144 + kong 80 = 688 MiB. Add 130 MiB for the existing
-# host services and 78 MiB for Linux kernel/daemons to reach 896 MiB; swap is
+# The observed/planning footprint for one seven-service stack now includes
+# headroom for Kong workers: the former 80 MiB cap caused repeated worker OOMs.
+# Its explicit caps are db 256 + templates 16 + auth 64 + rest 32 +
+# realtime 96 + functions 144 + kong 192 = 800 MiB. Add 130 MiB for the existing
+# host services and 78 MiB for Linux kernel/daemons to reach 1008 MiB; swap is
 # deliberately excluded. Two CPUs schedule the database plus application tier.
 #
 # The disk floor is derived from the stack's measured footprint, not from any
@@ -28,7 +29,7 @@ APPROVED_MIN_UBUNTU_VERSION=24
 # and which blocked the stack from being managed at all. dual-stack keeps its
 # own 40 GiB threshold unchanged.
 SINGLE_STACK_MIN_CPUS=2
-SINGLE_STACK_MIN_MEMORY_KIB=917504
+SINGLE_STACK_MIN_MEMORY_KIB=1032192
 SINGLE_STACK_MIN_DISK_KIB=12582912
 # The OS floor is NOT a capacity trade-off and is identical in both profiles.
 # Debian 12+ and Ubuntu 24.04+ are the explicitly approved, supported host

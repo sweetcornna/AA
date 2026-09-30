@@ -69,6 +69,13 @@ services:
     cpus: 0.35
 
   kong:
-    # Kong retains enough memory for the configured proxy buffers and plugins.
-    mem_limit: 80m
+    # The old 80 MiB cap repeatedly killed Nginx workers while `kong health`
+    # still passed. One worker and small caches leave room for proxy buffers,
+    # key translation and the health command without repeated worker OOMs.
+    environment:
+      KONG_NGINX_WORKER_PROCESSES: "1"
+      KONG_MEM_CACHE_SIZE: 8m
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 32k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 8 32k
+    mem_limit: 192m
     cpus: 0.20

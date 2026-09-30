@@ -209,9 +209,9 @@ def check_capacity_profiles() -> None:
             f"the floor must remain clearable once images have landed: {after_images.stderr}",
         )
 
-        below_floor = run("debian", "13", 2, 917503, "--profile", "single-stack")
+        below_floor = run("debian", "13", 2, 1032191, "--profile", "single-stack")
         check(
-            below_floor.returncode != 0 and "RAM gate failed: 917503 KiB < 917504 KiB" in below_floor.stderr,
+            below_floor.returncode != 0 and "RAM gate failed: 1032191 KiB < 1032192 KiB" in below_floor.stderr,
             "single-stack RAM floor must fail closed",
         )
         print("Single-stack below-floor fixture output:")
@@ -263,8 +263,64 @@ def write_artifact_fixture(runtime: Path, fingerprint: dict, upstream_commit: st
     return artifact, template
 
 
+def check_health_check() -> None:
+    # Regression: every service can report healthy while Kong workers are OOM
+    # killed. The host check must reject that state before probing any API.
+    import sys
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        rows = [{"ID": name, "Service": name, "State": "running", "Health": "healthy"}
+                for name in sorted(EXPECTED_SERVICES)]
+        docker = root / "docker"
+        docker.write_text(f"#!{sys.executable}\n" + """
+import json, os, sys
+if sys.argv[1] == 'compose':
+    print(os.environ['HEALTH_FIXTURE_ROWS'])
+elif sys.argv[1] == 'inspect':
+    for name in sys.argv[4:]:
+        killed = name == 'kong' and os.environ.get('HEALTH_FIXTURE_OOM') == '1'
+        print('/aa-' + name + ' ' + str(killed).lower())
+else:
+    raise SystemExit(2)
+""")
+        curl = root / "curl"
+        curl.write_text(f"#!{sys.executable}\n" + """
+import os, sys
+from pathlib import Path
+Path(os.environ['HEALTH_FIXTURE_PROBES']).touch()
+if os.environ.get('HEALTH_FIXTURE_TIMEOUT') == '1':
+    raise SystemExit(28)
+args = ' '.join(sys.argv[1:])
+if 'sb_publishable_invalid_health_probe' in args:
+    print('401', end='')
+elif '/rest/v1/' in args:
+    print('{"code":"42501"}\\n401', end='')
+""")
+        for executable in (docker, curl):
+            executable.chmod(0o755)
+        env_file = root / "fixture.env"
+        env_file.write_text("AA_STACK_ID=aa-health-fixture\nAA_ENVIRONMENT=production\n"
+                            "AA_KONG_BIND_HOST=127.0.0.1\nAA_KONG_HTTP_PORT=18101\n"
+                            "ANON_KEY=public-fixture\nSUPABASE_PUBLISHABLE_KEY=public-fixture\n")
+        probes = root / "probes"
+        environment = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}",
+                       "HEALTH_FIXTURE_ROWS": json.dumps(rows), "HEALTH_FIXTURE_PROBES": str(probes)}
+        command = ["bash", str(INFRA / "scripts/health-check.sh"), str(env_file)]
+        healthy = subprocess.run(command, env=environment, capture_output=True, text=True)
+        check(healthy.returncode == 0 and probes.exists(), f"healthy gateway fixture failed: {healthy.stderr}")
+        probes.unlink()
+        oom = subprocess.run(command, env={**environment, "HEALTH_FIXTURE_OOM": "1"}, capture_output=True, text=True)
+        check(oom.returncode != 0 and "recorded OOM kills" in oom.stderr and not probes.exists(),
+              "healthy container status must not hide a worker OOM")
+        timeout = subprocess.run(command, env={**environment, "HEALTH_FIXTURE_TIMEOUT": "1"}, capture_output=True, text=True)
+        check(timeout.returncode != 0 and "Auth health probe failed" in timeout.stderr,
+              "running containers must not hide an unresponsive gateway")
+        print("Health regressions passed: healthy gateway, hidden worker OOM, API timeout.")
+
+
 def main() -> None:
     check_capacity_profiles()
+    check_health_check()
     source = COMPOSE.read_text()
     prerequisites = (INFRA / "templates/db/aa-prerequisites.sql").read_text()
     check("container_name:" not in source, "Compose must not pin container names")
@@ -930,9 +986,9 @@ def main() -> None:
         "rest": 32,
         "realtime": 96,
         "functions": 144,
-        "kong": 80,
+        "kong": 192,
     }
-    check(sum(expected_single_memory_mib.values()) == 688, "single-stack memory budget must total 688 MiB")
+    check(sum(expected_single_memory_mib.values()) == 800, "single-stack memory budget must total 800 MiB")
     for name, expected_memory_mib in expected_single_memory_mib.items():
         check(
             single_services[name]["mem_limit"] == str(expected_memory_mib * 1024 * 1024),
@@ -947,6 +1003,11 @@ def main() -> None:
     check(single_services["auth"]["environment"]["GOTRUE_DB_MAX_POOL_SIZE"] == "5", "single-stack Auth pool mismatch")
     check(single_services["rest"]["environment"]["PGRST_DB_POOL"] == "5", "single-stack REST pool mismatch")
     check(single_services["realtime"]["environment"]["DB_POOL_SIZE"] == "5", "single-stack Realtime pool mismatch")
+    single_kong_environment = single_services["kong"]["environment"]
+    check(single_kong_environment["KONG_NGINX_WORKER_PROCESSES"] == "1", "single-stack Kong must use one worker")
+    check(single_kong_environment["KONG_MEM_CACHE_SIZE"] == "8m", "single-stack Kong cache budget mismatch")
+    check(single_kong_environment["KONG_NGINX_PROXY_PROXY_BUFFER_SIZE"] == "32k", "single-stack Kong header buffer mismatch")
+    check(single_kong_environment["KONG_NGINX_PROXY_PROXY_BUFFERS"] == "8 32k", "single-stack Kong proxy buffer budget mismatch")
     check(set(single_services["templates"]["tmpfs"]) == {
         "/var/cache/nginx:size=4m", "/var/run:size=1m", "/tmp:size=4m",
     }, "single-stack template tmpfs budget mismatch")
@@ -1107,13 +1168,13 @@ def main() -> None:
     ):
         check(unchanged in capacity, f"dual-stack threshold changed: {unchanged}")
     for single_floor in (
-        "SINGLE_STACK_MIN_CPUS=2", "SINGLE_STACK_MIN_MEMORY_KIB=917504",
+        "SINGLE_STACK_MIN_CPUS=2", "SINGLE_STACK_MIN_MEMORY_KIB=1032192",
         "SINGLE_STACK_MIN_DISK_KIB=12582912",
     ):
         check(single_floor in capacity, f"single-stack floor missing: {single_floor}")
     for rationale in (
-        "observed/planning footprint for one seven-service stack", "about 650-700",
-        "db 256 + templates 16 + auth 64 + rest 32", "functions 144 + kong 80 = 688 MiB",
+        "observed/planning footprint for one seven-service stack", "repeated worker OOMs",
+        "db 256 + templates 16 + auth 64 + rest 32", "functions 144 + kong 192 = 800 MiB",
         "130 MiB for the existing", "78 MiB for Linux kernel/daemons",
         "swap is", "pinned image set measures 3.96 GB",
         "about 10.7 GiB, rounded up to 12 GiB",
@@ -1163,7 +1224,7 @@ def main() -> None:
 
     runbook = (ROOT / "docs/HOSTED_DEPLOYMENT.md").read_text()
     for required in (
-        "deliberate deviation", "--profile single-stack", "917,504 KiB", "12,582,912 KiB",
+        "deliberate deviation", "--profile single-stack", "1,032,192 KiB", "12,582,912 KiB",
         "没有 staging validation", "所有变更直接进入 production", "PostgreSQL 在压力下可能触及 swap",
         "host OOM 或单容器 OOM 是现实风险", "Xray、Nginx、fail2ban、hermes 与 hermes-dashboard、cliproxy",
         "isolation proof **没有执行**", "drill 前 production 必须停止",

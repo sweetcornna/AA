@@ -44,7 +44,7 @@ single-stack 磁盘门于 2026-09-22 经 operator 明确批准，从 20 GiB 下�
 - [ ] restore drill 仍使用随机 restore-only project/network/volumes，并且 drill 前 production 必须停止；
 - [ ] source clean，全部仓库验证、encrypted backup、restore drill、production non-destructive canary 和恢复步骤均通过/演练。
 
-896 MiB floor 的来源不是目标 VM 的现有数值：七个服务的明确上限合计 688 MiB（PostgreSQL 256、template 16、GoTrue 64、PostgREST 32、Realtime 96、Edge Runtime 144、Kong 80），再加既有主机服务约 130 MiB 和 Linux kernel/host daemon 78 MiB。P1 的实测余量比该 floor 更紧而不是更宽：2026-09-21 `MemAvailable` 只有 909,924 KiB（约 888 MiB），`Committed_AS` 已达 2,615,792 KiB，swapfile 已用 398,112 KiB，因此 688 MiB 的服务上限几乎吃满全部可用内存，必须保护其 Xray、Nginx、Relay/WARP 出口与既有容器。`AA_MIN_CPUS`、`AA_MIN_MEMORY_KIB`、`AA_MIN_DISK_KIB` 只能提高当前 profile 的门，不能降低。
+1008 MiB floor 由七个服务的上限合计 800 MiB（PostgreSQL 256、template 16、GoTrue 64、PostgREST 32、Realtime 96、Edge Runtime 144、Kong 192），加既有主机服务约 130 MiB 和 Linux kernel/host daemon 78 MiB 推导。2026-09-30 诊断发现原 Kong 80 MiB 上限已累计导致超过 17,000 次 worker OOM kill，但 `kong health` 仍报告 healthy，公网请求间歇性超时/502。因此 single-stack 候选修复将 Kong 调整为单 worker、8 MiB cache 和较小 proxy buffers，同时将上限提高到 192 MiB，物理内存门相应提高 112 MiB；上线仍需批准。P1 与 Xray、Nginx、Relay/WARP 和既有容器共用内存，必须观察实际余量、swap 和 cgroup OOM 增量；`MemTotal` 通过不代表运行余量充分。`AA_MIN_CPUS`、`AA_MIN_MEMORY_KIB`、`AA_MIN_DISK_KIB` 只能提高当前 profile 的门，不能降低。
 
 operator 同时明确接受：没有 staging validation；所有变更直接进入 production；PostgreSQL 在压力下可能触及 swap；P1 只有约 1.93 GiB RAM 且已在用 swap，host OOM 或单容器 OOM 是现实风险而不是理论风险；Xray、Nginx、fail2ban、hermes 与 hermes-dashboard、cliproxy 及其 WARP proxy、sub2api、subconverter、onebot-tunnel、resident agent 与其他既有容器同 production 共享 CPU、RAM、swap 和磁盘。低于任一所选 profile gate 时只允许本地仓库验证，不得起远端容器、改 DNS、签证书或发布 APK。
 
@@ -201,7 +201,7 @@ sudo infra/supabase-selfhost/scripts/capacity-check.sh \
   /srv/aa "$(sudo docker info --format '{{.DockerRootDir}}')"
 ```
 
-single-stack 的 exact floor 是 2 CPU、917,504 KiB physical RAM、两个路径各 12,582,912 KiB free、Debian 12+ 或 Ubuntu 24.04+；dual-stack 保持 4 CPU、8,388,608 KiB、两个路径各 41,943,040 KiB free，并使用相同 OS 支持门。swap 只能缓解峰值压力，永远不能替代 `MemTotal` 门。`compose.sh` 在读取 DockerRootDir 前先 gate `/srv/aa`，之后再对 `/srv/aa` 和 DockerRootDir 执行同一 profile 的完整 gate。
+single-stack 的 exact floor 是 2 CPU、1,032,192 KiB physical RAM、两个路径各 12,582,912 KiB free、Debian 12+ 或 Ubuntu 24.04+；dual-stack 保持 4 CPU、8,388,608 KiB、两个路径各 41,943,040 KiB free，并使用相同 OS 支持门。swap 只能缓解峰值压力，永远不能替代 `MemTotal` 门。`compose.sh` 在读取 DockerRootDir 前先 gate `/srv/aa`，之后再对 `/srv/aa` 和 DockerRootDir 执行同一 profile 的完整 gate。
 
 确认现有监听、容器和磁盘；不要把外部端口扫描直接解释为 VM listener：
 

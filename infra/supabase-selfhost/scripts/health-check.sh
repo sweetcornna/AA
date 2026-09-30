@@ -12,6 +12,7 @@ expected=(db templates auth rest realtime functions kong)
 json="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps --format json)"
 python3 - "$json" "${expected[@]}" <<'PY'
 import json
+import subprocess
 import sys
 try:
     rows = json.loads(sys.argv[1])
@@ -32,6 +33,17 @@ for row in rows:
 missing = sorted(expected - seen)
 if missing or failures:
     raise SystemExit(f"stack unhealthy: missing={missing}, failures={failures}")
+
+# Nginx's master can survive worker OOM kills, and `kong health` still passes.
+# Check Docker's retained OOM flag before accepting a superficially healthy
+# stack. Recreating the affected container after fixing its budget clears it.
+container_ids = [row["ID"] for row in rows if row.get("Service") in expected]
+oom_state = subprocess.check_output([
+    "docker", "inspect", "--format", "{{.Name}} {{.State.OOMKilled}}", *container_ids,
+], text=True)
+oom_containers = [line.rsplit(" ", 1)[0] for line in oom_state.splitlines() if line.endswith(" true")]
+if oom_containers:
+    raise SystemExit(f"stack has recorded OOM kills: {oom_containers}")
 PY
 
 origin="http://${AA_KONG_BIND_HOST}:${AA_KONG_HTTP_PORT}"
