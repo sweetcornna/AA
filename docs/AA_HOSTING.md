@@ -37,4 +37,4 @@ GitHub Pages 不运行后端进程。GitHub Actions 是构建任务执行环境�
 
 部署源指纹为 `8619aac72f77dd65f858ebbf6a85caf770ea456a6843ffadde35874a92117b3a`。回滚材料在服务器 `/srv/aa/recovery-20260930/`：原源码 SHA、原 `stack.env` 与修复 Git bundle，均在 root-only 目录；原 immutable artifacts 仍在。回滚到旧网关预算会重新引入 OOM 风险，应仅作为配置损坏时的应急路径。
 
-修复源码及本记录已在本地分支保存，未推送 GitHub；线上网页没有重新发布。当前结果证明主要记账功能可用，仍需观察长期内存负载与 idle 后 Realtime 冷启动行为。
+修复源码及本记录的 GitHub 同步分支为 `codex/recover-aa-gateway-20260930`；线上网页没有重新发布。当前结果证明主要记账功能可用，仍需观察长期内存负载与 idle 后 Realtime 冷启动行为。
